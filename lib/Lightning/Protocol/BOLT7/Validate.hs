@@ -90,7 +90,7 @@ validateChannelUpdate msg = do
     Nothing -> Right ()
     Just htlcMax ->
       let htlcMin = chanUpdateHtlcMinMsat msg
-      in  if htlcMin > htlcMax
+      in  if getHtlcMinimumMsat htlcMin > getHtlcMaximumMsat htlcMax
           then Left ValidateHtlcAmounts
           else Right ()
 

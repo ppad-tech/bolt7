@@ -65,11 +65,11 @@ module Lightning.Protocol.BOLT7.Types (
   , getTorV3Addr
 
   -- * Routing parameters
-  , CltvExpiryDelta
-  , FeeBaseMsat
-  , FeeProportionalMillionths
-  , HtlcMinimumMsat
-  , HtlcMaximumMsat
+  , CltvExpiryDelta(..)
+  , FeeBaseMsat(..)
+  , FeeProportionalMillionths(..)
+  , HtlcMinimumMsat(..)
+  , HtlcMaximumMsat(..)
 
   -- * Constants
   , chainHashLen
@@ -404,16 +404,32 @@ instance NFData Address
 -- Routing parameters ----------------------------------------------------------
 
 -- | CLTV expiry delta.
-type CltvExpiryDelta = Word16
+newtype CltvExpiryDelta = CltvExpiryDelta { getCltvExpiryDelta :: Word16 }
+  deriving (Eq, Ord, Show, Generic)
+
+instance NFData CltvExpiryDelta
 
 -- | Base fee in millisatoshis.
-type FeeBaseMsat = Word32
+newtype FeeBaseMsat = FeeBaseMsat { getFeeBaseMsat :: Word32 }
+  deriving (Eq, Ord, Show, Generic)
+
+instance NFData FeeBaseMsat
 
 -- | Proportional fee in millionths.
-type FeeProportionalMillionths = Word32
+newtype FeeProportionalMillionths = FeeProportionalMillionths
+  { getFeeProportionalMillionths :: Word32 }
+  deriving (Eq, Ord, Show, Generic)
+
+instance NFData FeeProportionalMillionths
 
 -- | Minimum HTLC value in millisatoshis.
-type HtlcMinimumMsat = Word64
+newtype HtlcMinimumMsat = HtlcMinimumMsat { getHtlcMinimumMsat :: Word64 }
+  deriving (Eq, Ord, Show, Generic)
+
+instance NFData HtlcMinimumMsat
 
 -- | Maximum HTLC value in millisatoshis.
-type HtlcMaximumMsat = Word64
+newtype HtlcMaximumMsat = HtlcMaximumMsat { getHtlcMaximumMsat :: Word64 }
+  deriving (Eq, Ord, Show, Generic)
+
+instance NFData HtlcMaximumMsat

@@ -372,13 +372,13 @@ encodeChannelUpdate msg = mconcat
   , Prim.encodeU32 (chanUpdateTimestamp msg)
   , BS.singleton (chanUpdateMsgFlags msg)
   , BS.singleton (chanUpdateChanFlags msg)
-  , Prim.encodeU16 (chanUpdateCltvExpDelta msg)
-  , Prim.encodeU64 (chanUpdateHtlcMinMsat msg)
-  , Prim.encodeU32 (chanUpdateFeeBaseMsat msg)
-  , Prim.encodeU32 (chanUpdateFeeProportional msg)
+  , Prim.encodeU16 (getCltvExpiryDelta (chanUpdateCltvExpDelta msg))
+  , Prim.encodeU64 (getHtlcMinimumMsat (chanUpdateHtlcMinMsat msg))
+  , Prim.encodeU32 (getFeeBaseMsat (chanUpdateFeeBaseMsat msg))
+  , Prim.encodeU32 (getFeeProportionalMillionths (chanUpdateFeeProportional msg))
   , case chanUpdateHtlcMaxMsat msg of
       Nothing -> BS.empty
-      Just m  -> Prim.encodeU64 m
+      Just m  -> Prim.encodeU64 (getHtlcMaximumMsat m)
   ]
 
 -- | Decode channel_update message.
@@ -399,7 +399,7 @@ decodeChannelUpdate bs = do
   (htlcMax, rest) <- if msgFlags .&. 0x01 /= 0
     then do
       (m, r) <- decodeU64 bs10
-      Right (Just m, r)
+      Right (Just (HtlcMaximumMsat m), r)
     else Right (Nothing, bs10)
   let msg = ChannelUpdate
         { chanUpdateSignature       = sig
@@ -408,10 +408,10 @@ decodeChannelUpdate bs = do
         , chanUpdateTimestamp       = timestamp
         , chanUpdateMsgFlags        = msgFlags
         , chanUpdateChanFlags       = chanFlags
-        , chanUpdateCltvExpDelta    = cltvDelta
-        , chanUpdateHtlcMinMsat     = htlcMin
-        , chanUpdateFeeBaseMsat     = feeBase
-        , chanUpdateFeeProportional = feeProp
+        , chanUpdateCltvExpDelta    = CltvExpiryDelta cltvDelta
+        , chanUpdateHtlcMinMsat     = HtlcMinimumMsat htlcMin
+        , chanUpdateFeeBaseMsat     = FeeBaseMsat feeBase
+        , chanUpdateFeeProportional = FeeProportionalMillionths feeProp
         , chanUpdateHtlcMaxMsat     = htlcMax
         }
   Right (msg, rest)
