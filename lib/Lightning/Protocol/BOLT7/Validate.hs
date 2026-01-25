@@ -30,6 +30,7 @@ module Lightning.Protocol.BOLT7.Validate (
 import Control.DeepSeq (NFData)
 import Data.Word (Word32, Word64)
 import GHC.Generics (Generic)
+import Lightning.Protocol.BOLT7.Codec (decodeShortChannelIdList)
 import Lightning.Protocol.BOLT7.Messages
 import Lightning.Protocol.BOLT7.Types
 
@@ -108,20 +109,20 @@ validateQueryChannelRange msg = do
 
 -- | Validate reply_channel_range message.
 --
--- This function validates the encoded short_channel_ids are in ascending
--- order. Since the data field contains encoded SCIDs (with encoding type
--- byte), this validation requires decoding first.
+-- Checks:
 --
--- Note: This is a simplified check that verifies the encoded data length
--- is a multiple of 8 (for uncompressed encoding). Full ascending order
--- validation would require parsing the encoded data.
+-- * Encoded short_channel_ids are in ascending order
 validateReplyChannelRange :: ReplyChannelRange -> Either ValidationError ()
-validateReplyChannelRange _msg = do
-  -- For now, we just return success. Full validation would require
-  -- decoding the encoded_short_ids and checking ascending order.
-  -- The caller should use decodeShortChannelIdList and verify ordering
-  -- if needed.
-  Right ()
+validateReplyChannelRange msg =
+  case decodeShortChannelIdList (replyRangeData msg) of
+    Left _ -> Right ()  -- Can't decode, skip validation
+    Right scids -> checkAscending scids
+  where
+    checkAscending [] = Right ()
+    checkAscending [_] = Right ()
+    checkAscending (a:b:rest)
+      | getShortChannelId a < getShortChannelId b = checkAscending (b:rest)
+      | otherwise = Left ValidateScidNotAscending
 
 -- Internal helpers -----------------------------------------------------------
 
