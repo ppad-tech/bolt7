@@ -41,7 +41,7 @@ module Lightning.Protocol.BOLT7.Messages (
 
 import Control.DeepSeq (NFData)
 import Data.ByteString (ByteString)
-import Data.Word (Word8, Word16, Word32)
+import Data.Word (Word8, Word16, Word32)  -- Word8 still used by other messages
 import GHC.Generics (Generic)
 import Lightning.Protocol.BOLT1 (TlvStream)
 import Lightning.Protocol.BOLT7.Types
@@ -126,8 +126,8 @@ data ChannelUpdate = ChannelUpdate
   , chanUpdateChainHash      :: !ChainHash       -- ^ Chain identifier
   , chanUpdateShortChanId    :: !ShortChannelId  -- ^ Short channel ID
   , chanUpdateTimestamp      :: !Timestamp       -- ^ Unix timestamp
-  , chanUpdateMsgFlags       :: !Word8           -- ^ Message flags
-  , chanUpdateChanFlags      :: !Word8           -- ^ Channel flags
+  , chanUpdateMsgFlags       :: !MessageFlags    -- ^ Message flags
+  , chanUpdateChanFlags      :: !ChannelFlags    -- ^ Channel flags
   , chanUpdateCltvExpDelta   :: !CltvExpiryDelta -- ^ CLTV expiry delta
   , chanUpdateHtlcMinMsat    :: !HtlcMinimumMsat -- ^ Minimum HTLC msat
   , chanUpdateFeeBaseMsat    :: !FeeBaseMsat     -- ^ Base fee msat
