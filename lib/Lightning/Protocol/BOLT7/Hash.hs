@@ -31,6 +31,11 @@ import qualified Crypto.Hash.SHA256 as SHA256
 import Lightning.Protocol.BOLT7.CRC32C (crc32c)
 import Lightning.Protocol.BOLT7.Types (signatureLen, chainHashLen)
 
+-- | Double SHA-256 hash (used for Lightning message signing).
+doubleSha256 :: ByteString -> ByteString
+doubleSha256 = SHA256.hash . SHA256.hash
+{-# INLINE doubleSha256 #-}
+
 -- | Compute signature hash for channel_announcement.
 --
 -- The hash covers the message starting at byte offset 256, which is after
@@ -40,9 +45,9 @@ import Lightning.Protocol.BOLT7.Types (signatureLen, chainHashLen)
 -- Returns the double-SHA256 hash (32 bytes).
 channelAnnouncementHash :: ByteString -> ByteString
 channelAnnouncementHash !msg =
-  let offset = 4 * signatureLen  -- 4 signatures * 64 bytes = 256
+  let offset = 4 * signatureLen
       payload = BS.drop offset msg
-  in  SHA256.hash (SHA256.hash payload)
+  in  doubleSha256 payload
 {-# INLINE channelAnnouncementHash #-}
 
 -- | Compute signature hash for node_announcement.
@@ -53,7 +58,7 @@ channelAnnouncementHash !msg =
 nodeAnnouncementHash :: ByteString -> ByteString
 nodeAnnouncementHash !msg =
   let payload = BS.drop signatureLen msg
-  in  SHA256.hash (SHA256.hash payload)
+  in  doubleSha256 payload
 {-# INLINE nodeAnnouncementHash #-}
 
 -- | Compute signature hash for channel_update.
@@ -64,7 +69,7 @@ nodeAnnouncementHash !msg =
 channelUpdateHash :: ByteString -> ByteString
 channelUpdateHash !msg =
   let payload = BS.drop signatureLen msg
-  in  SHA256.hash (SHA256.hash payload)
+  in  doubleSha256 payload
 {-# INLINE channelUpdateHash #-}
 
 -- | Compute checksum for channel_update.
