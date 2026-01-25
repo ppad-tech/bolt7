@@ -135,79 +135,58 @@ decodeLenPrefixed bs = do
     else Right (BS.splitAt n rest)
 {-# INLINE decodeLenPrefixed #-}
 
+-- | Decode fixed-length validated type.
+decodeFixed :: Int -> DecodeError -> (ByteString -> Maybe a)
+            -> ByteString -> Either DecodeError (a, ByteString)
+decodeFixed len err mkVal bs = do
+  (bytes, rest) <- decodeBytes len bs
+  case mkVal bytes of
+    Nothing -> Left err
+    Just v  -> Right (v, rest)
+{-# INLINE decodeFixed #-}
+
 -- Type-specific decoders ------------------------------------------------------
 
 -- | Decode Signature (64 bytes).
 decodeSignature :: ByteString -> Either DecodeError (Signature, ByteString)
-decodeSignature bs = do
-  (bytes, rest) <- decodeBytes signatureLen bs
-  case signature bytes of
-    Nothing -> Left DecodeInvalidSignature
-    Just s  -> Right (s, rest)
+decodeSignature = decodeFixed signatureLen DecodeInvalidSignature signature
 {-# INLINE decodeSignature #-}
 
 -- | Decode ChainHash (32 bytes).
 decodeChainHash :: ByteString -> Either DecodeError (ChainHash, ByteString)
-decodeChainHash bs = do
-  (bytes, rest) <- decodeBytes chainHashLen bs
-  case chainHash bytes of
-    Nothing -> Left DecodeInvalidChainHash
-    Just h  -> Right (h, rest)
+decodeChainHash = decodeFixed chainHashLen DecodeInvalidChainHash chainHash
 {-# INLINE decodeChainHash #-}
 
 -- | Decode ShortChannelId (8 bytes).
 decodeShortChannelId :: ByteString
                      -> Either DecodeError (ShortChannelId, ByteString)
-decodeShortChannelId bs = do
-  (bytes, rest) <- decodeBytes shortChannelIdLen bs
-  case shortChannelId bytes of
-    Nothing -> Left DecodeInvalidShortChannelId
-    Just s  -> Right (s, rest)
+decodeShortChannelId =
+  decodeFixed shortChannelIdLen DecodeInvalidShortChannelId shortChannelId
 {-# INLINE decodeShortChannelId #-}
 
 -- | Decode ChannelId (32 bytes).
 decodeChannelId :: ByteString -> Either DecodeError (ChannelId, ByteString)
-decodeChannelId bs = do
-  (bytes, rest) <- decodeBytes channelIdLen bs
-  case channelId bytes of
-    Nothing -> Left DecodeInvalidChannelId
-    Just c  -> Right (c, rest)
+decodeChannelId = decodeFixed channelIdLen DecodeInvalidChannelId channelId
 {-# INLINE decodeChannelId #-}
 
 -- | Decode NodeId (33 bytes).
 decodeNodeId :: ByteString -> Either DecodeError (NodeId, ByteString)
-decodeNodeId bs = do
-  (bytes, rest) <- decodeBytes nodeIdLen bs
-  case nodeId bytes of
-    Nothing -> Left DecodeInvalidNodeId
-    Just n  -> Right (n, rest)
+decodeNodeId = decodeFixed nodeIdLen DecodeInvalidNodeId nodeId
 {-# INLINE decodeNodeId #-}
 
 -- | Decode Point (33 bytes).
 decodePoint :: ByteString -> Either DecodeError (Point, ByteString)
-decodePoint bs = do
-  (bytes, rest) <- decodeBytes pointLen bs
-  case point bytes of
-    Nothing -> Left DecodeInvalidPoint
-    Just p  -> Right (p, rest)
+decodePoint = decodeFixed pointLen DecodeInvalidPoint point
 {-# INLINE decodePoint #-}
 
 -- | Decode RgbColor (3 bytes).
 decodeRgbColor :: ByteString -> Either DecodeError (RgbColor, ByteString)
-decodeRgbColor bs = do
-  (bytes, rest) <- decodeBytes rgbColorLen bs
-  case rgbColor bytes of
-    Nothing -> Left DecodeInvalidRgbColor
-    Just c  -> Right (c, rest)
+decodeRgbColor = decodeFixed rgbColorLen DecodeInvalidRgbColor rgbColor
 {-# INLINE decodeRgbColor #-}
 
 -- | Decode Alias (32 bytes).
 decodeAlias :: ByteString -> Either DecodeError (Alias, ByteString)
-decodeAlias bs = do
-  (bytes, rest) <- decodeBytes aliasLen bs
-  case alias bytes of
-    Nothing -> Left DecodeInvalidAlias
-    Just a  -> Right (a, rest)
+decodeAlias = decodeFixed aliasLen DecodeInvalidAlias alias
 {-# INLINE decodeAlias #-}
 
 -- | Decode FeatureBits (length-prefixed).
