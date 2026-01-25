@@ -135,6 +135,11 @@ decodeLenPrefixed bs = do
     else Right (BS.splitAt n rest)
 {-# INLINE decodeLenPrefixed #-}
 
+-- | Encode with u16 length prefix.
+encodeLenPrefixed :: ByteString -> ByteString
+encodeLenPrefixed bs = Prim.encodeU16 (fromIntegral $ BS.length bs) <> bs
+{-# INLINE encodeLenPrefixed #-}
+
 -- Type-specific decoders ------------------------------------------------------
 
 -- | Decode Signature (64 bytes).
@@ -270,8 +275,7 @@ encodeChannelAnnouncement msg = mconcat
   , getSignature (channelAnnNodeSig2 msg)
   , getSignature (channelAnnBitcoinSig1 msg)
   , getSignature (channelAnnBitcoinSig2 msg)
-  , Prim.encodeU16 (fromIntegral $ BS.length features)
-  , features
+  , encodeLenPrefixed (getFeatureBits (channelAnnFeatures msg))
   , getChainHash (channelAnnChainHash msg)
   , getShortChannelId (channelAnnShortChanId msg)
   , getNodeId (channelAnnNodeId1 msg)
@@ -279,8 +283,6 @@ encodeChannelAnnouncement msg = mconcat
   , getPoint (channelAnnBitcoinKey1 msg)
   , getPoint (channelAnnBitcoinKey2 msg)
   ]
-  where
-    features = getFeatureBits (channelAnnFeatures msg)
 
 -- | Decode channel_announcement message.
 decodeChannelAnnouncement :: ByteString
@@ -323,14 +325,12 @@ encodeNodeAnnouncement msg = do
     then Left EncodeLengthOverflow
     else Right $ mconcat
       [ getSignature (nodeAnnSignature msg)
-      , Prim.encodeU16 (fromIntegral $ BS.length features)
-      , features
+      , encodeLenPrefixed features
       , Prim.encodeU32 (nodeAnnTimestamp msg)
       , getNodeId (nodeAnnNodeId msg)
       , getRgbColor (nodeAnnRgbColor msg)
       , getAlias (nodeAnnAlias msg)
-      , Prim.encodeU16 (fromIntegral $ BS.length addrData)
-      , addrData
+      , encodeLenPrefixed addrData
       ]
 
 -- | Encode address list.
@@ -476,8 +476,7 @@ encodeQueryShortChannelIds msg = do
     then Left EncodeLengthOverflow
     else Right $ mconcat
       [ getChainHash (queryScidsChainHash msg)
-      , Prim.encodeU16 (fromIntegral $ BS.length scidData)
-      , scidData
+      , encodeLenPrefixed scidData
       , TLV.encodeTlvStream (queryScidsTlvs msg)
       ]
 
@@ -556,8 +555,7 @@ encodeReplyChannelRange msg = do
       , Prim.encodeU32 (replyRangeFirstBlock msg)
       , Prim.encodeU32 (replyRangeNumBlocks msg)
       , BS.singleton (replyRangeSyncComplete msg)
-      , Prim.encodeU16 (fromIntegral $ BS.length rangeData)
-      , rangeData
+      , encodeLenPrefixed rangeData
       , TLV.encodeTlvStream (replyRangeTlvs msg)
       ]
 
