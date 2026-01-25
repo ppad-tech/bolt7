@@ -87,6 +87,17 @@ type_tests = testGroup "Types" [
         let scid = fromJust $ shortChannelId (BS.pack
               [0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0])
         scidOutputIndex scid @?= 0xdef0
+    , testCase "mkShortChannelId roundtrip" $ do
+        let scid = mkShortChannelId 539268 845 1
+        scidBlockHeight scid @?= 539268
+        scidTxIndex scid @?= 845
+        scidOutputIndex scid @?= 1
+    , testCase "formatScid" $ do
+        let scid = mkShortChannelId 539268 845 1
+        formatScid scid @?= "539268x845x1"
+    , testCase "formatScid zero values" $ do
+        let scid = mkShortChannelId 0 0 0
+        formatScid scid @?= "0x0x0"
     ]
   , testGroup "Smart constructors" [
       testCase "chainHash rejects wrong length" $ do
@@ -101,6 +112,17 @@ type_tests = testGroup "Types" [
     , testCase "point rejects wrong length" $ do
         point (BS.replicate 32 0x00) @?= Nothing
         point (BS.replicate 34 0x00) @?= Nothing
+    ]
+  , testGroup "Constants" [
+      testCase "mainnetChainHash has correct length" $ do
+        BS.length (getChainHash mainnetChainHash) @?= 32
+    ]
+  , testGroup "NodeId ordering" [
+      testCase "NodeId Ord is lexicographic" $ do
+        let n1 = fromJust $ nodeId (BS.pack $ 0x02 : replicate 32 0x00)
+            n2 = fromJust $ nodeId (BS.pack $ 0x03 : replicate 32 0x00)
+        n1 < n2 @?= True
+        n2 < n1 @?= False
     ]
   ]
 
