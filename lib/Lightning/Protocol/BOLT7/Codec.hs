@@ -1,0 +1,600 @@
+{-# LANGUAGE BangPatterns #-}
+
+-- |
+-- Module: Lightning.Protocol.BOLT7.Codec
+-- Copyright: (c) 2025 Jared Tobin
+-- License: MIT
+-- Maintainer: Jared Tobin <jared@ppad.tech>
+--
+-- Encoding and decoding for BOLT #7 gossip messages.
+
+module Lightning.Protocol.BOLT7.Codec (
+  -- * Error types
+    EncodeError(..)
+  , DecodeError(..)
+
+  -- * Channel announcement
+  , encodeChannelAnnouncement
+  , decodeChannelAnnouncement
+
+  -- * Node announcement
+  , encodeNodeAnnouncement
+  , decodeNodeAnnouncement
+
+  -- * Channel update
+  , encodeChannelUpdate
+  , decodeChannelUpdate
+
+  -- * Announcement signatures
+  , encodeAnnouncementSignatures
+  , decodeAnnouncementSignatures
+
+  -- * Query messages
+  , encodeQueryShortChannelIds
+  , decodeQueryShortChannelIds
+  , encodeReplyShortChannelIdsEnd
+  , decodeReplyShortChannelIdsEnd
+  , encodeQueryChannelRange
+  , decodeQueryChannelRange
+  , encodeReplyChannelRange
+  , decodeReplyChannelRange
+  , encodeGossipTimestampFilter
+  , decodeGossipTimestampFilter
+  ) where
+
+import Data.Bits ((.&.))
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
+import Data.Word (Word8, Word16, Word32, Word64)
+import Lightning.Protocol.BOLT1 (TlvStream(..))
+import qualified Lightning.Protocol.BOLT1.Prim as Prim
+import qualified Lightning.Protocol.BOLT1.TLV as TLV
+import Lightning.Protocol.BOLT7.Messages
+import Lightning.Protocol.BOLT7.Types
+
+-- Error types -----------------------------------------------------------------
+
+-- | Encoding errors.
+data EncodeError
+  = EncodeLengthOverflow  -- ^ Field too large for u16 length prefix
+  deriving (Eq, Show)
+
+-- | Decoding errors.
+data DecodeError
+  = DecodeInsufficientBytes          -- ^ Not enough bytes
+  | DecodeInvalidSignature           -- ^ Invalid signature field
+  | DecodeInvalidChainHash           -- ^ Invalid chain hash field
+  | DecodeInvalidShortChannelId      -- ^ Invalid short channel ID field
+  | DecodeInvalidChannelId           -- ^ Invalid channel ID field
+  | DecodeInvalidNodeId              -- ^ Invalid node ID field
+  | DecodeInvalidPoint               -- ^ Invalid point field
+  | DecodeInvalidRgbColor            -- ^ Invalid RGB color field
+  | DecodeInvalidAlias               -- ^ Invalid alias field
+  | DecodeInvalidAddress             -- ^ Invalid address encoding
+  | DecodeTlvError                   -- ^ TLV decoding error
+  deriving (Eq, Show)
+
+-- Primitive helpers -----------------------------------------------------------
+
+-- | Decode u8.
+decodeU8 :: ByteString -> Either DecodeError (Word8, ByteString)
+decodeU8 bs
+  | BS.null bs = Left DecodeInsufficientBytes
+  | otherwise = Right (BS.index bs 0, BS.drop 1 bs)
+{-# INLINE decodeU8 #-}
+
+-- | Decode u16 (big-endian).
+decodeU16 :: ByteString -> Either DecodeError (Word16, ByteString)
+decodeU16 bs
+  | BS.length bs < 2 = Left DecodeInsufficientBytes
+  | otherwise =
+      let (bytes, rest) = BS.splitAt 2 bs
+      in  Right (Prim.word16 bytes, rest)
+{-# INLINE decodeU16 #-}
+
+-- | Decode u32 (big-endian).
+decodeU32 :: ByteString -> Either DecodeError (Word32, ByteString)
+decodeU32 bs
+  | BS.length bs < 4 = Left DecodeInsufficientBytes
+  | otherwise =
+      let (bytes, rest) = BS.splitAt 4 bs
+      in  Right (Prim.word32 bytes, rest)
+{-# INLINE decodeU32 #-}
+
+-- | Decode u64 (big-endian).
+decodeU64 :: ByteString -> Either DecodeError (Word64, ByteString)
+decodeU64 bs
+  | BS.length bs < 8 = Left DecodeInsufficientBytes
+  | otherwise =
+      let (bytes, rest) = BS.splitAt 8 bs
+      in  Right (Prim.word64 bytes, rest)
+{-# INLINE decodeU64 #-}
+
+-- | Decode fixed-length bytes.
+decodeBytes :: Int -> ByteString -> Either DecodeError (ByteString, ByteString)
+decodeBytes n bs
+  | BS.length bs < n = Left DecodeInsufficientBytes
+  | otherwise = Right (BS.splitAt n bs)
+{-# INLINE decodeBytes #-}
+
+-- | Decode length-prefixed bytes (u16 prefix).
+decodeLenPrefixed :: ByteString
+                  -> Either DecodeError (ByteString, ByteString)
+decodeLenPrefixed bs = do
+  (len, rest) <- decodeU16 bs
+  let n = fromIntegral len
+  if BS.length rest < n
+    then Left DecodeInsufficientBytes
+    else Right (BS.splitAt n rest)
+{-# INLINE decodeLenPrefixed #-}
+
+-- Type-specific decoders ------------------------------------------------------
+
+-- | Decode Signature (64 bytes).
+decodeSignature :: ByteString -> Either DecodeError (Signature, ByteString)
+decodeSignature bs = do
+  (bytes, rest) <- decodeBytes signatureLen bs
+  case signature bytes of
+    Nothing -> Left DecodeInvalidSignature
+    Just s  -> Right (s, rest)
+{-# INLINE decodeSignature #-}
+
+-- | Decode ChainHash (32 bytes).
+decodeChainHash :: ByteString -> Either DecodeError (ChainHash, ByteString)
+decodeChainHash bs = do
+  (bytes, rest) <- decodeBytes chainHashLen bs
+  case chainHash bytes of
+    Nothing -> Left DecodeInvalidChainHash
+    Just h  -> Right (h, rest)
+{-# INLINE decodeChainHash #-}
+
+-- | Decode ShortChannelId (8 bytes).
+decodeShortChannelId :: ByteString
+                     -> Either DecodeError (ShortChannelId, ByteString)
+decodeShortChannelId bs = do
+  (bytes, rest) <- decodeBytes shortChannelIdLen bs
+  case shortChannelId bytes of
+    Nothing -> Left DecodeInvalidShortChannelId
+    Just s  -> Right (s, rest)
+{-# INLINE decodeShortChannelId #-}
+
+-- | Decode ChannelId (32 bytes).
+decodeChannelId :: ByteString -> Either DecodeError (ChannelId, ByteString)
+decodeChannelId bs = do
+  (bytes, rest) <- decodeBytes channelIdLen bs
+  case channelId bytes of
+    Nothing -> Left DecodeInvalidChannelId
+    Just c  -> Right (c, rest)
+{-# INLINE decodeChannelId #-}
+
+-- | Decode NodeId (33 bytes).
+decodeNodeId :: ByteString -> Either DecodeError (NodeId, ByteString)
+decodeNodeId bs = do
+  (bytes, rest) <- decodeBytes nodeIdLen bs
+  case nodeId bytes of
+    Nothing -> Left DecodeInvalidNodeId
+    Just n  -> Right (n, rest)
+{-# INLINE decodeNodeId #-}
+
+-- | Decode Point (33 bytes).
+decodePoint :: ByteString -> Either DecodeError (Point, ByteString)
+decodePoint bs = do
+  (bytes, rest) <- decodeBytes pointLen bs
+  case point bytes of
+    Nothing -> Left DecodeInvalidPoint
+    Just p  -> Right (p, rest)
+{-# INLINE decodePoint #-}
+
+-- | Decode RgbColor (3 bytes).
+decodeRgbColor :: ByteString -> Either DecodeError (RgbColor, ByteString)
+decodeRgbColor bs = do
+  (bytes, rest) <- decodeBytes rgbColorLen bs
+  case rgbColor bytes of
+    Nothing -> Left DecodeInvalidRgbColor
+    Just c  -> Right (c, rest)
+{-# INLINE decodeRgbColor #-}
+
+-- | Decode Alias (32 bytes).
+decodeAlias :: ByteString -> Either DecodeError (Alias, ByteString)
+decodeAlias bs = do
+  (bytes, rest) <- decodeBytes aliasLen bs
+  case alias bytes of
+    Nothing -> Left DecodeInvalidAlias
+    Just a  -> Right (a, rest)
+{-# INLINE decodeAlias #-}
+
+-- | Decode FeatureBits (length-prefixed).
+decodeFeatureBits :: ByteString -> Either DecodeError (FeatureBits, ByteString)
+decodeFeatureBits bs = do
+  (bytes, rest) <- decodeLenPrefixed bs
+  Right (featureBits bytes, rest)
+{-# INLINE decodeFeatureBits #-}
+
+-- | Decode addresses list (length-prefixed).
+decodeAddresses :: ByteString -> Either DecodeError ([Address], ByteString)
+decodeAddresses bs = do
+  (addrData, rest) <- decodeLenPrefixed bs
+  addrs <- parseAddrs addrData
+  Right (addrs, rest)
+  where
+    parseAddrs :: ByteString -> Either DecodeError [Address]
+    parseAddrs !d
+      | BS.null d = Right []
+      | otherwise = do
+          (addr, d') <- parseOneAddr d
+          rest <- parseAddrs d'
+          Right (addr : rest)
+
+    parseOneAddr :: ByteString -> Either DecodeError (Address, ByteString)
+    parseOneAddr d = do
+      (typ, d1) <- decodeU8 d
+      case typ of
+        1 -> do  -- IPv4
+          (addrBytes, d2) <- decodeBytes ipv4AddrLen d1
+          (port, d3) <- decodeU16 d2
+          case ipv4Addr addrBytes of
+            Nothing -> Left DecodeInvalidAddress
+            Just a  -> Right (AddrIPv4 a port, d3)
+        2 -> do  -- IPv6
+          (addrBytes, d2) <- decodeBytes ipv6AddrLen d1
+          (port, d3) <- decodeU16 d2
+          case ipv6Addr addrBytes of
+            Nothing -> Left DecodeInvalidAddress
+            Just a  -> Right (AddrIPv6 a port, d3)
+        4 -> do  -- Tor v3
+          (addrBytes, d2) <- decodeBytes torV3AddrLen d1
+          (port, d3) <- decodeU16 d2
+          case torV3Addr addrBytes of
+            Nothing -> Left DecodeInvalidAddress
+            Just a  -> Right (AddrTorV3 a port, d3)
+        5 -> do  -- DNS hostname
+          (hostLen, d2) <- decodeU8 d1
+          (hostBytes, d3) <- decodeBytes (fromIntegral hostLen) d2
+          (port, d4) <- decodeU16 d3
+          Right (AddrDNS hostBytes port, d4)
+        _ -> Left DecodeInvalidAddress  -- Unknown address type
+
+-- Channel announcement --------------------------------------------------------
+
+-- | Encode channel_announcement message.
+encodeChannelAnnouncement :: ChannelAnnouncement -> ByteString
+encodeChannelAnnouncement msg = mconcat
+  [ getSignature (channelAnnNodeSig1 msg)
+  , getSignature (channelAnnNodeSig2 msg)
+  , getSignature (channelAnnBitcoinSig1 msg)
+  , getSignature (channelAnnBitcoinSig2 msg)
+  , Prim.u16 (fromIntegral $ BS.length features)
+  , features
+  , getChainHash (channelAnnChainHash msg)
+  , getShortChannelId (channelAnnShortChanId msg)
+  , getNodeId (channelAnnNodeId1 msg)
+  , getNodeId (channelAnnNodeId2 msg)
+  , getPoint (channelAnnBitcoinKey1 msg)
+  , getPoint (channelAnnBitcoinKey2 msg)
+  ]
+  where
+    features = getFeatureBits (channelAnnFeatures msg)
+
+-- | Decode channel_announcement message.
+decodeChannelAnnouncement :: ByteString
+                          -> Either DecodeError (ChannelAnnouncement, ByteString)
+decodeChannelAnnouncement bs = do
+  (nodeSig1, bs1)    <- decodeSignature bs
+  (nodeSig2, bs2)    <- decodeSignature bs1
+  (btcSig1, bs3)     <- decodeSignature bs2
+  (btcSig2, bs4)     <- decodeSignature bs3
+  (features, bs5)    <- decodeFeatureBits bs4
+  (chainH, bs6)      <- decodeChainHash bs5
+  (scid, bs7)        <- decodeShortChannelId bs6
+  (nodeId1, bs8)     <- decodeNodeId bs7
+  (nodeId2, bs9)     <- decodeNodeId bs8
+  (btcKey1, bs10)    <- decodePoint bs9
+  (btcKey2, rest)    <- decodePoint bs10
+  let msg = ChannelAnnouncement
+        { channelAnnNodeSig1    = nodeSig1
+        , channelAnnNodeSig2    = nodeSig2
+        , channelAnnBitcoinSig1 = btcSig1
+        , channelAnnBitcoinSig2 = btcSig2
+        , channelAnnFeatures    = features
+        , channelAnnChainHash   = chainH
+        , channelAnnShortChanId = scid
+        , channelAnnNodeId1     = nodeId1
+        , channelAnnNodeId2     = nodeId2
+        , channelAnnBitcoinKey1 = btcKey1
+        , channelAnnBitcoinKey2 = btcKey2
+        }
+  Right (msg, rest)
+
+-- Node announcement -----------------------------------------------------------
+
+-- | Encode node_announcement message.
+encodeNodeAnnouncement :: NodeAnnouncement -> Either EncodeError ByteString
+encodeNodeAnnouncement msg = do
+  addrData <- encodeAddresses (nodeAnnAddresses msg)
+  let features = getFeatureBits (nodeAnnFeatures msg)
+  if BS.length features > 65535
+    then Left EncodeLengthOverflow
+    else Right $ mconcat
+      [ getSignature (nodeAnnSignature msg)
+      , Prim.u16 (fromIntegral $ BS.length features)
+      , features
+      , Prim.u32 (nodeAnnTimestamp msg)
+      , getNodeId (nodeAnnNodeId msg)
+      , getRgbColor (nodeAnnRgbColor msg)
+      , getAlias (nodeAnnAlias msg)
+      , Prim.u16 (fromIntegral $ BS.length addrData)
+      , addrData
+      ]
+
+-- | Encode address list.
+encodeAddresses :: [Address] -> Either EncodeError ByteString
+encodeAddresses addrs = Right $ mconcat (map encodeAddress addrs)
+  where
+    encodeAddress :: Address -> ByteString
+    encodeAddress (AddrIPv4 a port) = mconcat
+      [ BS.singleton 1
+      , getIPv4Addr a
+      , Prim.u16 port
+      ]
+    encodeAddress (AddrIPv6 a port) = mconcat
+      [ BS.singleton 2
+      , getIPv6Addr a
+      , Prim.u16 port
+      ]
+    encodeAddress (AddrTorV3 a port) = mconcat
+      [ BS.singleton 4
+      , getTorV3Addr a
+      , Prim.u16 port
+      ]
+    encodeAddress (AddrDNS host port) = mconcat
+      [ BS.singleton 5
+      , BS.singleton (fromIntegral $ BS.length host)
+      , host
+      , Prim.u16 port
+      ]
+
+-- | Decode node_announcement message.
+decodeNodeAnnouncement :: ByteString
+                       -> Either DecodeError (NodeAnnouncement, ByteString)
+decodeNodeAnnouncement bs = do
+  (sig, bs1)       <- decodeSignature bs
+  (features, bs2)  <- decodeFeatureBits bs1
+  (timestamp, bs3) <- decodeU32 bs2
+  (nid, bs4)       <- decodeNodeId bs3
+  (color, bs5)     <- decodeRgbColor bs4
+  (al, bs6)        <- decodeAlias bs5
+  (addrs, rest)    <- decodeAddresses bs6
+  let msg = NodeAnnouncement
+        { nodeAnnSignature = sig
+        , nodeAnnFeatures  = features
+        , nodeAnnTimestamp = timestamp
+        , nodeAnnNodeId    = nid
+        , nodeAnnRgbColor  = color
+        , nodeAnnAlias     = al
+        , nodeAnnAddresses = addrs
+        }
+  Right (msg, rest)
+
+-- Channel update --------------------------------------------------------------
+
+-- | Encode channel_update message.
+encodeChannelUpdate :: ChannelUpdate -> ByteString
+encodeChannelUpdate msg = mconcat
+  [ getSignature (chanUpdateSignature msg)
+  , getChainHash (chanUpdateChainHash msg)
+  , getShortChannelId (chanUpdateShortChanId msg)
+  , Prim.u32 (chanUpdateTimestamp msg)
+  , BS.singleton (chanUpdateMsgFlags msg)
+  , BS.singleton (chanUpdateChanFlags msg)
+  , Prim.u16 (chanUpdateCltvExpDelta msg)
+  , Prim.u64 (chanUpdateHtlcMinMsat msg)
+  , Prim.u32 (chanUpdateFeeBaseMsat msg)
+  , Prim.u32 (chanUpdateFeeProportional msg)
+  , case chanUpdateHtlcMaxMsat msg of
+      Nothing -> BS.empty
+      Just m  -> Prim.u64 m
+  ]
+
+-- | Decode channel_update message.
+decodeChannelUpdate :: ByteString
+                    -> Either DecodeError (ChannelUpdate, ByteString)
+decodeChannelUpdate bs = do
+  (sig, bs1)        <- decodeSignature bs
+  (chainH, bs2)     <- decodeChainHash bs1
+  (scid, bs3)       <- decodeShortChannelId bs2
+  (timestamp, bs4)  <- decodeU32 bs3
+  (msgFlags, bs5)   <- decodeU8 bs4
+  (chanFlags, bs6)  <- decodeU8 bs5
+  (cltvDelta, bs7)  <- decodeU16 bs6
+  (htlcMin, bs8)    <- decodeU64 bs7
+  (feeBase, bs9)    <- decodeU32 bs8
+  (feeProp, bs10)   <- decodeU32 bs9
+  -- htlc_maximum_msat is present if message_flags bit 0 is set
+  (htlcMax, rest) <- if msgFlags .&. 0x01 /= 0
+    then do
+      (m, r) <- decodeU64 bs10
+      Right (Just m, r)
+    else Right (Nothing, bs10)
+  let msg = ChannelUpdate
+        { chanUpdateSignature      = sig
+        , chanUpdateChainHash      = chainH
+        , chanUpdateShortChanId    = scid
+        , chanUpdateTimestamp      = timestamp
+        , chanUpdateMsgFlags       = msgFlags
+        , chanUpdateChanFlags      = chanFlags
+        , chanUpdateCltvExpDelta   = cltvDelta
+        , chanUpdateHtlcMinMsat    = htlcMin
+        , chanUpdateFeeBaseMsat    = feeBase
+        , chanUpdateFeeProportional = feeProp
+        , chanUpdateHtlcMaxMsat    = htlcMax
+        }
+  Right (msg, rest)
+
+-- Announcement signatures -----------------------------------------------------
+
+-- | Encode announcement_signatures message.
+encodeAnnouncementSignatures :: AnnouncementSignatures -> ByteString
+encodeAnnouncementSignatures msg = mconcat
+  [ getChannelId (annSigChannelId msg)
+  , getShortChannelId (annSigShortChanId msg)
+  , getSignature (annSigNodeSig msg)
+  , getSignature (annSigBitcoinSig msg)
+  ]
+
+-- | Decode announcement_signatures message.
+decodeAnnouncementSignatures :: ByteString
+                             -> Either DecodeError
+                                  (AnnouncementSignatures, ByteString)
+decodeAnnouncementSignatures bs = do
+  (cid, bs1)     <- decodeChannelId bs
+  (scid, bs2)    <- decodeShortChannelId bs1
+  (nodeSig, bs3) <- decodeSignature bs2
+  (btcSig, rest) <- decodeSignature bs3
+  let msg = AnnouncementSignatures
+        { annSigChannelId   = cid
+        , annSigShortChanId = scid
+        , annSigNodeSig     = nodeSig
+        , annSigBitcoinSig  = btcSig
+        }
+  Right (msg, rest)
+
+-- Query messages --------------------------------------------------------------
+
+-- | Encode query_short_channel_ids message.
+encodeQueryShortChannelIds :: QueryShortChannelIds
+                           -> Either EncodeError ByteString
+encodeQueryShortChannelIds msg = do
+  let scidData = queryScidsData msg
+  if BS.length scidData > 65535
+    then Left EncodeLengthOverflow
+    else Right $ mconcat
+      [ getChainHash (queryScidsChainHash msg)
+      , Prim.u16 (fromIntegral $ BS.length scidData)
+      , scidData
+      , TLV.encodeTlvStream (queryScidsTlvs msg)
+      ]
+
+-- | Decode query_short_channel_ids message.
+decodeQueryShortChannelIds :: ByteString
+                           -> Either DecodeError
+                                (QueryShortChannelIds, ByteString)
+decodeQueryShortChannelIds bs = do
+  (chainH, bs1)   <- decodeChainHash bs
+  (scidData, bs2) <- decodeLenPrefixed bs1
+  let tlvs = case TLV.decodeTlvStreamRaw bs2 of
+        Left _       -> TlvStream []
+        Right (t, _) -> t
+  let msg = QueryShortChannelIds
+        { queryScidsChainHash = chainH
+        , queryScidsData      = scidData
+        , queryScidsTlvs      = tlvs
+        }
+  Right (msg, BS.empty)
+
+-- | Encode reply_short_channel_ids_end message.
+encodeReplyShortChannelIdsEnd :: ReplyShortChannelIdsEnd -> ByteString
+encodeReplyShortChannelIdsEnd msg = mconcat
+  [ getChainHash (replyScidsChainHash msg)
+  , BS.singleton (replyScidsFullInfo msg)
+  ]
+
+-- | Decode reply_short_channel_ids_end message.
+decodeReplyShortChannelIdsEnd :: ByteString
+                              -> Either DecodeError
+                                   (ReplyShortChannelIdsEnd, ByteString)
+decodeReplyShortChannelIdsEnd bs = do
+  (chainH, bs1)    <- decodeChainHash bs
+  (fullInfo, rest) <- decodeU8 bs1
+  let msg = ReplyShortChannelIdsEnd
+        { replyScidsChainHash = chainH
+        , replyScidsFullInfo  = fullInfo
+        }
+  Right (msg, rest)
+
+-- | Encode query_channel_range message.
+encodeQueryChannelRange :: QueryChannelRange -> ByteString
+encodeQueryChannelRange msg = mconcat
+  [ getChainHash (queryRangeChainHash msg)
+  , Prim.u32 (queryRangeFirstBlock msg)
+  , Prim.u32 (queryRangeNumBlocks msg)
+  , TLV.encodeTlvStream (queryRangeTlvs msg)
+  ]
+
+-- | Decode query_channel_range message.
+decodeQueryChannelRange :: ByteString
+                        -> Either DecodeError (QueryChannelRange, ByteString)
+decodeQueryChannelRange bs = do
+  (chainH, bs1)     <- decodeChainHash bs
+  (firstBlock, bs2) <- decodeU32 bs1
+  (numBlocks, bs3)  <- decodeU32 bs2
+  let tlvs = case TLV.decodeTlvStreamRaw bs3 of
+        Left _       -> TlvStream []
+        Right (t, _) -> t
+  let msg = QueryChannelRange
+        { queryRangeChainHash  = chainH
+        , queryRangeFirstBlock = firstBlock
+        , queryRangeNumBlocks  = numBlocks
+        , queryRangeTlvs       = tlvs
+        }
+  Right (msg, BS.empty)
+
+-- | Encode reply_channel_range message.
+encodeReplyChannelRange :: ReplyChannelRange -> Either EncodeError ByteString
+encodeReplyChannelRange msg = do
+  let rangeData = replyRangeData msg
+  if BS.length rangeData > 65535
+    then Left EncodeLengthOverflow
+    else Right $ mconcat
+      [ getChainHash (replyRangeChainHash msg)
+      , Prim.u32 (replyRangeFirstBlock msg)
+      , Prim.u32 (replyRangeNumBlocks msg)
+      , BS.singleton (replyRangeSyncComplete msg)
+      , Prim.u16 (fromIntegral $ BS.length rangeData)
+      , rangeData
+      , TLV.encodeTlvStream (replyRangeTlvs msg)
+      ]
+
+-- | Decode reply_channel_range message.
+decodeReplyChannelRange :: ByteString
+                        -> Either DecodeError (ReplyChannelRange, ByteString)
+decodeReplyChannelRange bs = do
+  (chainH, bs1)      <- decodeChainHash bs
+  (firstBlock, bs2)  <- decodeU32 bs1
+  (numBlocks, bs3)   <- decodeU32 bs2
+  (syncComplete, bs4) <- decodeU8 bs3
+  (rangeData, bs5)   <- decodeLenPrefixed bs4
+  let tlvs = case TLV.decodeTlvStreamRaw bs5 of
+        Left _       -> TlvStream []
+        Right (t, _) -> t
+  let msg = ReplyChannelRange
+        { replyRangeChainHash    = chainH
+        , replyRangeFirstBlock   = firstBlock
+        , replyRangeNumBlocks    = numBlocks
+        , replyRangeSyncComplete = syncComplete
+        , replyRangeData         = rangeData
+        , replyRangeTlvs         = tlvs
+        }
+  Right (msg, BS.empty)
+
+-- | Encode gossip_timestamp_filter message.
+encodeGossipTimestampFilter :: GossipTimestampFilter -> ByteString
+encodeGossipTimestampFilter msg = mconcat
+  [ getChainHash (gossipFilterChainHash msg)
+  , Prim.u32 (gossipFilterFirstTimestamp msg)
+  , Prim.u32 (gossipFilterTimestampRange msg)
+  ]
+
+-- | Decode gossip_timestamp_filter message.
+decodeGossipTimestampFilter :: ByteString
+                            -> Either DecodeError
+                                 (GossipTimestampFilter, ByteString)
+decodeGossipTimestampFilter bs = do
+  (chainH, bs1)         <- decodeChainHash bs
+  (firstTs, bs2)        <- decodeU32 bs1
+  (tsRange, rest)       <- decodeU32 bs2
+  let msg = GossipTimestampFilter
+        { gossipFilterChainHash      = chainH
+        , gossipFilterFirstTimestamp = firstTs
+        , gossipFilterTimestampRange = tsRange
+        }
+  Right (msg, rest)
