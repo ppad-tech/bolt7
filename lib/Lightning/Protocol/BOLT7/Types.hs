@@ -14,12 +14,15 @@ module Lightning.Protocol.BOLT7.Types (
     ChainHash
   , chainHash
   , getChainHash
+  , mainnetChainHash
   , ShortChannelId
   , shortChannelId
+  , mkShortChannelId
   , getShortChannelId
   , scidBlockHeight
   , scidTxIndex
   , scidOutputIndex
+  , formatScid
   , ChannelId
   , channelId
   , getChannelId
@@ -81,10 +84,10 @@ module Lightning.Protocol.BOLT7.Types (
   ) where
 
 import Control.DeepSeq (NFData)
-import Data.Bits (shiftL, (.|.))
+import Data.Bits (shiftL, shiftR, (.&.), (.|.))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
-import Data.Word (Word16, Word32, Word64)
+import Data.Word (Word8, Word16, Word32, Word64)
 import GHC.Generics (Generic)
 
 -- Constants -------------------------------------------------------------------
@@ -159,6 +162,18 @@ chainHash !bs
   | otherwise = Nothing
 {-# INLINE chainHash #-}
 
+-- | Bitcoin mainnet chain hash (genesis block hash, little-endian).
+--
+-- This is the double-SHA256 of the mainnet genesis block header, reversed
+-- to little-endian byte order as used in the protocol.
+mainnetChainHash :: ChainHash
+mainnetChainHash = ChainHash $ BS.pack
+  [ 0x6f, 0xe2, 0x8c, 0x0a, 0xb6, 0xf1, 0xb3, 0x72
+  , 0xc1, 0xa6, 0xa2, 0x46, 0xae, 0x63, 0xf7, 0x4f
+  , 0x93, 0x1e, 0x83, 0x65, 0xe1, 0x5a, 0x08, 0x9c
+  , 0x68, 0xd6, 0x19, 0x00, 0x00, 0x00, 0x00, 0x00
+  ]
+
 -- | Short channel ID (8 bytes): block height (3) + tx index (3) + output (2).
 newtype ShortChannelId = ShortChannelId { getShortChannelId :: ByteString }
   deriving (Eq, Show, Generic)
@@ -171,6 +186,29 @@ shortChannelId !bs
   | BS.length bs == shortChannelIdLen = Just (ShortChannelId bs)
   | otherwise = Nothing
 {-# INLINE shortChannelId #-}
+
+-- | Construct ShortChannelId from components.
+--
+-- Block height and tx index are truncated to 24 bits.
+--
+-- >>> mkShortChannelId 539268 845 1
+-- ShortChannelId {getShortChannelId = "\NUL\131\132\NUL\ETX-\NUL\SOH"}
+mkShortChannelId
+  :: Word32  -- ^ Block height (24 bits)
+  -> Word32  -- ^ Transaction index (24 bits)
+  -> Word16  -- ^ Output index
+  -> ShortChannelId
+mkShortChannelId !block !txIdx !outIdx = ShortChannelId $ BS.pack
+  [ fromIntegral ((block `shiftR` 16) .&. 0xff) :: Word8
+  , fromIntegral ((block `shiftR` 8) .&. 0xff)
+  , fromIntegral (block .&. 0xff)
+  , fromIntegral ((txIdx `shiftR` 16) .&. 0xff)
+  , fromIntegral ((txIdx `shiftR` 8) .&. 0xff)
+  , fromIntegral (txIdx .&. 0xff)
+  , fromIntegral ((outIdx `shiftR` 8) .&. 0xff)
+  , fromIntegral (outIdx .&. 0xff)
+  ]
+{-# INLINE mkShortChannelId #-}
 
 -- | Extract block height from short channel ID (first 3 bytes, big-endian).
 scidBlockHeight :: ShortChannelId -> Word32
@@ -197,6 +235,19 @@ scidOutputIndex (ShortChannelId bs) =
       b7 = fromIntegral (BS.index bs 7)
   in  (b6 `shiftL` 8) .|. b7
 {-# INLINE scidOutputIndex #-}
+
+-- | Format short channel ID as human-readable string.
+--
+-- Uses the standard "block x tx x output" notation.
+--
+-- >>> formatScid (mkShortChannelId 539268 845 1)
+-- "539268x845x1"
+formatScid :: ShortChannelId -> String
+formatScid scid =
+  show (scidBlockHeight scid) ++ "x" ++
+  show (scidTxIndex scid) ++ "x" ++
+  show (scidOutputIndex scid)
+{-# INLINE formatScid #-}
 
 -- | Channel ID (32 bytes).
 newtype ChannelId = ChannelId { getChannelId :: ByteString }
@@ -240,8 +291,11 @@ point !bs
 {-# INLINE point #-}
 
 -- | Node ID (33 bytes, same as compressed public key).
+--
+-- Has Ord instance for lexicographic comparison (required by spec for
+-- channel announcements where node_id_1 < node_id_2).
 newtype NodeId = NodeId { getNodeId :: ByteString }
-  deriving (Eq, Show, Generic)
+  deriving (Eq, Ord, Show, Generic)
 
 instance NFData NodeId
 
