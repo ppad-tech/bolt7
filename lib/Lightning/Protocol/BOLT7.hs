@@ -8,6 +8,65 @@
 --
 -- Routing gossip protocol for the Lightning Network, per
 -- [BOLT #7](https://github.com/lightning/bolts/blob/master/07-routing-gossip.md).
+--
+-- = Overview
+--
+-- This module provides types, encoding\/decoding, and validation for
+-- BOLT #7 routing gossip messages. The protocol enables nodes to
+-- share channel and node information across the network.
+--
+-- = Usage
+--
+-- Import this module to access all BOLT #7 functionality:
+--
+-- @
+-- import Lightning.Protocol.BOLT7
+-- @
+--
+-- == Decoding messages
+--
+-- @
+-- -- Decode a channel_announcement from wire format
+-- case decodeChannelAnnouncement wireBytes of
+--   Left err -> handleError err
+--   Right (msg, rest) -> processAnnouncement msg
+-- @
+--
+-- == Encoding messages
+--
+-- @
+-- -- Encode a gossip_timestamp_filter
+-- let msg = GossipTimestampFilter
+--       { gossipFilterChainHash      = mainnetChainHash
+--       , gossipFilterFirstTimestamp = 1609459200
+--       , gossipFilterTimestampRange = 86400
+--       }
+-- let wireBytes = encodeGossipTimestampFilter msg
+-- @
+--
+-- == Validation
+--
+-- @
+-- -- Validate a channel_announcement before processing
+-- case validateChannelAnnouncement announcement of
+--   Left ValidateNodeIdOrdering -> rejectMessage
+--   Right () -> processValidMessage
+-- @
+--
+-- == Signature verification
+--
+-- This library provides hash computation for signature verification:
+--
+-- @
+-- -- Compute the hash that should be signed
+-- let sigHash = channelAnnouncementHash encodedMessage
+-- -- Verify signatures using ppad-secp256k1 (not included)
+-- @
+--
+-- = Protocol overview
+--
+-- BOLT #7 defines gossip messages for routing in the Lightning Network.
+-- Nodes use these messages to build a view of the channel graph.
 
 module Lightning.Protocol.BOLT7 (
   -- * Core types

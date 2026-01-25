@@ -1,3 +1,5 @@
+{-# OPTIONS_HADDOCK prune #-}
+
 {-# LANGUAGE BangPatterns #-}
 
 -- |
