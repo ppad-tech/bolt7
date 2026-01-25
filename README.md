@@ -4,7 +4,39 @@ A pure Haskell implementation of
 [BOLT #7](https://github.com/lightning/bolts/blob/master/07-routing-gossip.md)
 (Lightning Network routing gossip protocol).
 
-## Synopsis
+## Usage
+
+A sample GHCi session:
+
+```
+  > :set -XOverloadedStrings
+  >
+  > -- import qualified
+  > import qualified Lightning.Protocol.BOLT7 as B7
+  >
+  > -- decode a gossip_timestamp_filter from wire bytes (after msg type)
+  > -- wire contains: 32-byte chain_hash, 4-byte first_timestamp,
+  > --                4-byte timestamp_range
+  > case B7.decodeGossipTimestampFilter wire of
+  >   Left err -> print err
+  >   Right (msg, rest) -> print (B7.gossipFilterFirstTimestamp msg)
+  1609459200
+  >
+  > -- construct and encode a gossip_timestamp_filter
+  > let msg = B7.GossipTimestampFilter B7.mainnetChainHash 1609459200 86400
+  > let encoded = B7.encodeGossipTimestampFilter msg
+  >
+  > -- validate a channel_announcement before processing
+  > case B7.validateChannelAnnouncement announcement of
+  >   Left B7.ValidateNodeIdOrdering -> putStrLn "invalid node ordering"
+  >   Right () -> putStrLn "valid"
+  >
+  > -- compute the hash for signature verification
+  > let sigHash = B7.channelAnnouncementHash encodedAnnouncement
+  > -- verify signatures with ppad-secp256k1 (separate library)
+```
+
+## Overview
 
 ppad-bolt7 provides types and codecs for BOLT #7 gossip messages:
 
