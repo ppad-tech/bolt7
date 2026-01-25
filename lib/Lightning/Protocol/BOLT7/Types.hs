@@ -64,6 +64,14 @@ module Lightning.Protocol.BOLT7.Types (
   , torV3Addr
   , getTorV3Addr
 
+  -- * Channel update flags
+  , MessageFlags(..)
+  , encodeMessageFlags
+  , decodeMessageFlags
+  , ChannelFlags(..)
+  , encodeChannelFlags
+  , decodeChannelFlags
+
   -- * Routing parameters
   , CltvExpiryDelta
   , FeeBaseMsat
@@ -400,6 +408,55 @@ data Address
   deriving (Eq, Show, Generic)
 
 instance NFData Address
+
+-- Channel update flags --------------------------------------------------------
+
+-- | Message flags for channel_update.
+--
+-- Bit 0: htlc_maximum_msat field is present.
+data MessageFlags = MessageFlags
+  { mfHtlcMaxPresent :: !Bool  -- ^ htlc_maximum_msat is present
+  }
+  deriving (Eq, Show, Generic)
+
+instance NFData MessageFlags
+
+-- | Encode MessageFlags to Word8.
+encodeMessageFlags :: MessageFlags -> Word8
+encodeMessageFlags mf = if mfHtlcMaxPresent mf then 0x01 else 0x00
+{-# INLINE encodeMessageFlags #-}
+
+-- | Decode Word8 to MessageFlags.
+decodeMessageFlags :: Word8 -> MessageFlags
+decodeMessageFlags w = MessageFlags { mfHtlcMaxPresent = w .&. 0x01 /= 0 }
+{-# INLINE decodeMessageFlags #-}
+
+-- | Channel flags for channel_update.
+--
+-- Bit 0: direction (0 = node_id_1 is origin, 1 = node_id_2 is origin).
+-- Bit 1: disabled (1 = channel disabled).
+data ChannelFlags = ChannelFlags
+  { cfDirection :: !Bool  -- ^ True = node_id_2 is origin
+  , cfDisabled  :: !Bool  -- ^ True = channel is disabled
+  }
+  deriving (Eq, Show, Generic)
+
+instance NFData ChannelFlags
+
+-- | Encode ChannelFlags to Word8.
+encodeChannelFlags :: ChannelFlags -> Word8
+encodeChannelFlags cf =
+  (if cfDirection cf then 0x01 else 0x00) .|.
+  (if cfDisabled cf then 0x02 else 0x00)
+{-# INLINE encodeChannelFlags #-}
+
+-- | Decode Word8 to ChannelFlags.
+decodeChannelFlags :: Word8 -> ChannelFlags
+decodeChannelFlags w = ChannelFlags
+  { cfDirection = w .&. 0x01 /= 0
+  , cfDisabled  = w .&. 0x02 /= 0
+  }
+{-# INLINE decodeChannelFlags #-}
 
 -- Routing parameters ----------------------------------------------------------
 

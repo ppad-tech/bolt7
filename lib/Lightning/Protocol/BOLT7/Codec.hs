@@ -50,7 +50,6 @@ module Lightning.Protocol.BOLT7.Codec (
   ) where
 
 import Control.DeepSeq (NFData)
-import Data.Bits ((.&.))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Word (Word8, Word16, Word32, Word64)
@@ -370,8 +369,8 @@ encodeChannelUpdate msg = mconcat
   , getChainHash (chanUpdateChainHash msg)
   , getShortChannelId (chanUpdateShortChanId msg)
   , Prim.encodeU32 (chanUpdateTimestamp msg)
-  , BS.singleton (chanUpdateMsgFlags msg)
-  , BS.singleton (chanUpdateChanFlags msg)
+  , BS.singleton (encodeMessageFlags (chanUpdateMsgFlags msg))
+  , BS.singleton (encodeChannelFlags (chanUpdateChanFlags msg))
   , Prim.encodeU16 (chanUpdateCltvExpDelta msg)
   , Prim.encodeU64 (chanUpdateHtlcMinMsat msg)
   , Prim.encodeU32 (chanUpdateFeeBaseMsat msg)
@@ -385,18 +384,20 @@ encodeChannelUpdate msg = mconcat
 decodeChannelUpdate :: ByteString
                     -> Either DecodeError (ChannelUpdate, ByteString)
 decodeChannelUpdate bs = do
-  (sig, bs1)        <- decodeSignature bs
-  (chainH, bs2)     <- decodeChainHash bs1
-  (scid, bs3)       <- decodeShortChannelId bs2
-  (timestamp, bs4)  <- decodeU32 bs3
-  (msgFlags, bs5)   <- decodeU8 bs4
-  (chanFlags, bs6)  <- decodeU8 bs5
-  (cltvDelta, bs7)  <- decodeU16 bs6
-  (htlcMin, bs8)    <- decodeU64 bs7
-  (feeBase, bs9)    <- decodeU32 bs8
-  (feeProp, bs10)   <- decodeU32 bs9
+  (sig, bs1)         <- decodeSignature bs
+  (chainH, bs2)      <- decodeChainHash bs1
+  (scid, bs3)        <- decodeShortChannelId bs2
+  (timestamp, bs4)   <- decodeU32 bs3
+  (msgFlagsRaw, bs5) <- decodeU8 bs4
+  (chanFlagsRaw, bs6) <- decodeU8 bs5
+  (cltvDelta, bs7)   <- decodeU16 bs6
+  (htlcMin, bs8)     <- decodeU64 bs7
+  (feeBase, bs9)     <- decodeU32 bs8
+  (feeProp, bs10)    <- decodeU32 bs9
+  let msgFlags' = decodeMessageFlags msgFlagsRaw
+      chanFlags' = decodeChannelFlags chanFlagsRaw
   -- htlc_maximum_msat is present if message_flags bit 0 is set
-  (htlcMax, rest) <- if msgFlags .&. 0x01 /= 0
+  (htlcMax, rest) <- if mfHtlcMaxPresent msgFlags'
     then do
       (m, r) <- decodeU64 bs10
       Right (Just m, r)
@@ -406,8 +407,8 @@ decodeChannelUpdate bs = do
         , chanUpdateChainHash       = chainH
         , chanUpdateShortChanId     = scid
         , chanUpdateTimestamp       = timestamp
-        , chanUpdateMsgFlags        = msgFlags
-        , chanUpdateChanFlags       = chanFlags
+        , chanUpdateMsgFlags        = msgFlags'
+        , chanUpdateChanFlags       = chanFlags'
         , chanUpdateCltvExpDelta    = cltvDelta
         , chanUpdateHtlcMinMsat     = htlcMin
         , chanUpdateFeeBaseMsat     = feeBase

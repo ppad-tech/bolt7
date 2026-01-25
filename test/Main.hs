@@ -201,8 +201,9 @@ channel_update_tests = testGroup "ChannelUpdate" [
             , chanUpdateChainHash      = testChainHash
             , chanUpdateShortChanId    = testShortChannelId
             , chanUpdateTimestamp      = 1234567890
-            , chanUpdateMsgFlags       = 0x00
-            , chanUpdateChanFlags      = 0x01
+            , chanUpdateMsgFlags       = MessageFlags { mfHtlcMaxPresent = False }
+            , chanUpdateChanFlags      = ChannelFlags
+                { cfDirection = True, cfDisabled = False }
             , chanUpdateCltvExpDelta   = 144
             , chanUpdateHtlcMinMsat    = 1000
             , chanUpdateFeeBaseMsat    = 1000
@@ -219,8 +220,9 @@ channel_update_tests = testGroup "ChannelUpdate" [
             , chanUpdateChainHash      = testChainHash
             , chanUpdateShortChanId    = testShortChannelId
             , chanUpdateTimestamp      = 1234567890
-            , chanUpdateMsgFlags       = 0x01  -- bit 0 set
-            , chanUpdateChanFlags      = 0x00
+            , chanUpdateMsgFlags       = MessageFlags { mfHtlcMaxPresent = True }
+            , chanUpdateChanFlags      = ChannelFlags
+                { cfDirection = False, cfDisabled = False }
             , chanUpdateCltvExpDelta   = 40
             , chanUpdateHtlcMinMsat    = 1000
             , chanUpdateFeeBaseMsat    = 500
@@ -419,8 +421,9 @@ hash_tests = testGroup "Hash Functions" [
               , chanUpdateChainHash       = testChainHash
               , chanUpdateShortChanId     = testShortChannelId
               , chanUpdateTimestamp       = 1234567890
-              , chanUpdateMsgFlags        = 0x00
-              , chanUpdateChanFlags       = 0x00
+              , chanUpdateMsgFlags        = MessageFlags { mfHtlcMaxPresent = False }
+              , chanUpdateChanFlags       = ChannelFlags
+                  { cfDirection = False, cfDisabled = False }
               , chanUpdateCltvExpDelta    = 144
               , chanUpdateHtlcMinMsat     = 1000
               , chanUpdateFeeBaseMsat     = 1000
@@ -438,8 +441,9 @@ hash_tests = testGroup "Hash Functions" [
               , chanUpdateChainHash       = testChainHash
               , chanUpdateShortChanId     = testShortChannelId
               , chanUpdateTimestamp       = 1234567890
-              , chanUpdateMsgFlags        = 0x00
-              , chanUpdateChanFlags       = 0x00
+              , chanUpdateMsgFlags        = MessageFlags { mfHtlcMaxPresent = False }
+              , chanUpdateChanFlags       = ChannelFlags
+                  { cfDirection = False, cfDisabled = False }
               , chanUpdateCltvExpDelta    = 144
               , chanUpdateHtlcMinMsat     = 1000
               , chanUpdateFeeBaseMsat     = 1000
@@ -456,8 +460,9 @@ hash_tests = testGroup "Hash Functions" [
               , chanUpdateChainHash       = testChainHash
               , chanUpdateShortChanId     = testShortChannelId
               , chanUpdateTimestamp       = 1000000000
-              , chanUpdateMsgFlags        = 0x00
-              , chanUpdateChanFlags       = 0x00
+              , chanUpdateMsgFlags        = MessageFlags { mfHtlcMaxPresent = False }
+              , chanUpdateChanFlags       = ChannelFlags
+                  { cfDirection = False, cfDisabled = False }
               , chanUpdateCltvExpDelta    = 144
               , chanUpdateHtlcMinMsat     = 1000
               , chanUpdateFeeBaseMsat     = 1000
@@ -469,8 +474,9 @@ hash_tests = testGroup "Hash Functions" [
               , chanUpdateChainHash       = testChainHash
               , chanUpdateShortChanId     = testShortChannelId
               , chanUpdateTimestamp       = 2000000000
-              , chanUpdateMsgFlags        = 0x00
-              , chanUpdateChanFlags       = 0x00
+              , chanUpdateMsgFlags        = MessageFlags { mfHtlcMaxPresent = False }
+              , chanUpdateChanFlags       = ChannelFlags
+                  { cfDirection = False, cfDisabled = False }
               , chanUpdateCltvExpDelta    = 144
               , chanUpdateHtlcMinMsat     = 1000
               , chanUpdateFeeBaseMsat     = 1000
@@ -524,8 +530,9 @@ validation_tests = testGroup "Validation" [
               , chanUpdateChainHash       = testChainHash
               , chanUpdateShortChanId     = testShortChannelId
               , chanUpdateTimestamp       = 1234567890
-              , chanUpdateMsgFlags        = 0x01
-              , chanUpdateChanFlags       = 0x00
+              , chanUpdateMsgFlags        = MessageFlags { mfHtlcMaxPresent = True }
+              , chanUpdateChanFlags       = ChannelFlags
+                  { cfDirection = False, cfDisabled = False }
               , chanUpdateCltvExpDelta    = 144
               , chanUpdateHtlcMinMsat     = 1000
               , chanUpdateFeeBaseMsat     = 1000
@@ -539,8 +546,9 @@ validation_tests = testGroup "Validation" [
               , chanUpdateChainHash       = testChainHash
               , chanUpdateShortChanId     = testShortChannelId
               , chanUpdateTimestamp       = 1234567890
-              , chanUpdateMsgFlags        = 0x01
-              , chanUpdateChanFlags       = 0x00
+              , chanUpdateMsgFlags        = MessageFlags { mfHtlcMaxPresent = True }
+              , chanUpdateChanFlags       = ChannelFlags
+                  { cfDirection = False, cfDisabled = False }
               , chanUpdateCltvExpDelta    = 144
               , chanUpdateHtlcMinMsat     = 2000000000  -- > htlcMax
               , chanUpdateFeeBaseMsat     = 1000
@@ -634,8 +642,9 @@ propChannelUpdateRoundtrip timestamp cltvDelta = property $ do
         , chanUpdateChainHash      = testChainHash
         , chanUpdateShortChanId    = testShortChannelId
         , chanUpdateTimestamp      = timestamp
-        , chanUpdateMsgFlags       = 0x00
-        , chanUpdateChanFlags      = 0x00
+        , chanUpdateMsgFlags       = MessageFlags { mfHtlcMaxPresent = False }
+        , chanUpdateChanFlags      = ChannelFlags
+            { cfDirection = False, cfDisabled = False }
         , chanUpdateCltvExpDelta   = cltvDelta
         , chanUpdateHtlcMinMsat    = 1000
         , chanUpdateFeeBaseMsat    = 1000
