@@ -63,14 +63,14 @@ testChannelId = case channelId zeroBytes32 of
   Nothing -> error "testChannelId: invalid"
 {-# NOINLINE testChannelId #-}
 
--- | 33-byte node ID.
+-- | 33-byte node ID (03 prefix).
 testNodeId :: NodeId
 testNodeId = case nodeId (BS.cons 0x03 zeroBytes32) of
   Just n  -> n
   Nothing -> error "testNodeId: invalid"
 {-# NOINLINE testNodeId #-}
 
--- | Second node ID.
+-- | Second node ID (02 prefix, lexicographically smaller).
 testNodeId2 :: NodeId
 testNodeId2 = case nodeId (BS.cons 0x02 zeroBytes32) of
   Just n  -> n
@@ -91,6 +91,13 @@ testAlias = case alias zeroBytes32 of
   Nothing -> error "testAlias: invalid"
 {-# NOINLINE testAlias #-}
 
+-- | IPv4 address.
+testIPv4 :: IPv4Addr
+testIPv4 = case ipv4Addr (BS.pack [127, 0, 0, 1]) of
+  Just a  -> a
+  Nothing -> error "testIPv4: invalid"
+{-# NOINLINE testIPv4 #-}
+
 -- | Empty TLV stream.
 emptyTlvs :: TlvStream
 emptyTlvs = unsafeTlvStream []
@@ -100,6 +107,20 @@ emptyTlvs = unsafeTlvStream []
 emptyFeatures :: FeatureBits
 emptyFeatures = featureBits BS.empty
 {-# NOINLINE emptyFeatures #-}
+
+-- | List of test SCIDs for list encoding benchmarks.
+testScidList :: [ShortChannelId]
+testScidList = map mkScid [1..100]
+  where
+    mkScid n = case shortChannelId (BS.pack [0, 0, 0, n, 0, 0, 0, n]) of
+      Just s  -> s
+      Nothing -> error "mkScid: invalid"
+{-# NOINLINE testScidList #-}
+
+-- | Encoded SCID list for decode benchmarks.
+encodedScidList :: BS.ByteString
+encodedScidList = encodeShortChannelIdList testScidList
+{-# NOINLINE encodedScidList #-}
 
 -- Test messages ---------------------------------------------------------------
 
@@ -113,8 +134,8 @@ testChannelAnnouncement = ChannelAnnouncement
   , channelAnnFeatures     = emptyFeatures
   , channelAnnChainHash    = testChainHash
   , channelAnnShortChanId  = testShortChannelId
-  , channelAnnNodeId1      = testNodeId
-  , channelAnnNodeId2      = testNodeId2
+  , channelAnnNodeId1      = testNodeId2  -- 02... (smaller)
+  , channelAnnNodeId2      = testNodeId   -- 03... (larger)
   , channelAnnBitcoinKey1  = testPoint
   , channelAnnBitcoinKey2  = testPoint
   }
@@ -124,6 +145,26 @@ testChannelAnnouncement = ChannelAnnouncement
 encodedChannelAnnouncement :: BS.ByteString
 encodedChannelAnnouncement = encodeChannelAnnouncement testChannelAnnouncement
 {-# NOINLINE encodedChannelAnnouncement #-}
+
+-- | Test NodeAnnouncement message.
+testNodeAnnouncement :: NodeAnnouncement
+testNodeAnnouncement = NodeAnnouncement
+  { nodeAnnSignature = testSignature
+  , nodeAnnFeatures  = emptyFeatures
+  , nodeAnnTimestamp = 1234567890
+  , nodeAnnNodeId    = testNodeId
+  , nodeAnnRgbColor  = testRgbColor
+  , nodeAnnAlias     = testAlias
+  , nodeAnnAddresses = [AddrIPv4 testIPv4 9735]
+  }
+{-# NOINLINE testNodeAnnouncement #-}
+
+-- | Encoded NodeAnnouncement for decode benchmarks.
+encodedNodeAnnouncement :: BS.ByteString
+encodedNodeAnnouncement = case encodeNodeAnnouncement testNodeAnnouncement of
+  Right bs -> bs
+  Left _   -> error "encodedNodeAnnouncement: encode failed"
+{-# NOINLINE encodedNodeAnnouncement #-}
 
 -- | Test ChannelUpdate message.
 testChannelUpdate :: ChannelUpdate
@@ -163,6 +204,71 @@ encodedAnnouncementSignatures =
   encodeAnnouncementSignatures testAnnouncementSignatures
 {-# NOINLINE encodedAnnouncementSignatures #-}
 
+-- | Test QueryShortChannelIds message.
+testQueryShortChannelIds :: QueryShortChannelIds
+testQueryShortChannelIds = QueryShortChannelIds
+  { queryScidsChainHash = testChainHash
+  , queryScidsData      = encodeShortChannelIdList [testShortChannelId]
+  , queryScidsTlvs      = emptyTlvs
+  }
+{-# NOINLINE testQueryShortChannelIds #-}
+
+-- | Encoded QueryShortChannelIds for decode benchmarks.
+encodedQueryShortChannelIds :: BS.ByteString
+encodedQueryShortChannelIds =
+  case encodeQueryShortChannelIds testQueryShortChannelIds of
+    Right bs -> bs
+    Left _   -> error "encodedQueryShortChannelIds: encode failed"
+{-# NOINLINE encodedQueryShortChannelIds #-}
+
+-- | Test ReplyShortChannelIdsEnd message.
+testReplyShortChannelIdsEnd :: ReplyShortChannelIdsEnd
+testReplyShortChannelIdsEnd = ReplyShortChannelIdsEnd
+  { replyScidsChainHash = testChainHash
+  , replyScidsFullInfo  = 1
+  }
+{-# NOINLINE testReplyShortChannelIdsEnd #-}
+
+-- | Encoded ReplyShortChannelIdsEnd for decode benchmarks.
+encodedReplyShortChannelIdsEnd :: BS.ByteString
+encodedReplyShortChannelIdsEnd =
+  encodeReplyShortChannelIdsEnd testReplyShortChannelIdsEnd
+{-# NOINLINE encodedReplyShortChannelIdsEnd #-}
+
+-- | Test QueryChannelRange message.
+testQueryChannelRange :: QueryChannelRange
+testQueryChannelRange = QueryChannelRange
+  { queryRangeChainHash  = testChainHash
+  , queryRangeFirstBlock = 700000
+  , queryRangeNumBlocks  = 10000
+  , queryRangeTlvs       = emptyTlvs
+  }
+{-# NOINLINE testQueryChannelRange #-}
+
+-- | Encoded QueryChannelRange for decode benchmarks.
+encodedQueryChannelRange :: BS.ByteString
+encodedQueryChannelRange = encodeQueryChannelRange testQueryChannelRange
+{-# NOINLINE encodedQueryChannelRange #-}
+
+-- | Test ReplyChannelRange message.
+testReplyChannelRange :: ReplyChannelRange
+testReplyChannelRange = ReplyChannelRange
+  { replyRangeChainHash    = testChainHash
+  , replyRangeFirstBlock   = 700000
+  , replyRangeNumBlocks    = 10000
+  , replyRangeSyncComplete = 1
+  , replyRangeData         = encodeShortChannelIdList [testShortChannelId]
+  , replyRangeTlvs         = emptyTlvs
+  }
+{-# NOINLINE testReplyChannelRange #-}
+
+-- | Encoded ReplyChannelRange for decode benchmarks.
+encodedReplyChannelRange :: BS.ByteString
+encodedReplyChannelRange = case encodeReplyChannelRange testReplyChannelRange of
+  Right bs -> bs
+  Left _   -> error "encodedReplyChannelRange: encode failed"
+{-# NOINLINE encodedReplyChannelRange #-}
+
 -- | Test GossipTimestampFilter message.
 testGossipTimestampFilter :: GossipTimestampFilter
 testGossipTimestampFilter = GossipTimestampFilter
@@ -186,6 +292,10 @@ main = defaultMain
       [ bench "encode" $ nf encodeChannelAnnouncement testChannelAnnouncement
       , bench "decode" $ nf decodeChannelAnnouncement encodedChannelAnnouncement
       ]
+  , bgroup "node_announcement"
+      [ bench "encode" $ nf encodeNodeAnnouncement testNodeAnnouncement
+      , bench "decode" $ nf decodeNodeAnnouncement encodedNodeAnnouncement
+      ]
   , bgroup "channel_update"
       [ bench "encode" $ nf encodeChannelUpdate testChannelUpdate
       , bench "decode" $ nf decodeChannelUpdate encodedChannelUpdate
@@ -196,10 +306,56 @@ main = defaultMain
       , bench "decode" $
           nf decodeAnnouncementSignatures encodedAnnouncementSignatures
       ]
+  , bgroup "query_short_channel_ids"
+      [ bench "encode" $
+          nf encodeQueryShortChannelIds testQueryShortChannelIds
+      , bench "decode" $
+          nf decodeQueryShortChannelIds encodedQueryShortChannelIds
+      ]
+  , bgroup "reply_short_channel_ids_end"
+      [ bench "encode" $
+          nf encodeReplyShortChannelIdsEnd testReplyShortChannelIdsEnd
+      , bench "decode" $
+          nf decodeReplyShortChannelIdsEnd encodedReplyShortChannelIdsEnd
+      ]
+  , bgroup "query_channel_range"
+      [ bench "encode" $ nf encodeQueryChannelRange testQueryChannelRange
+      , bench "decode" $ nf decodeQueryChannelRange encodedQueryChannelRange
+      ]
+  , bgroup "reply_channel_range"
+      [ bench "encode" $ nf encodeReplyChannelRange testReplyChannelRange
+      , bench "decode" $ nf decodeReplyChannelRange encodedReplyChannelRange
+      ]
   , bgroup "gossip_timestamp_filter"
       [ bench "encode" $
           nf encodeGossipTimestampFilter testGossipTimestampFilter
       , bench "decode" $
           nf decodeGossipTimestampFilter encodedGossipTimestampFilter
+      ]
+  , bgroup "scid_list"
+      [ bench "encode (100)" $ nf encodeShortChannelIdList testScidList
+      , bench "decode (100)" $ nf decodeShortChannelIdList encodedScidList
+      ]
+  , bgroup "hash"
+      [ bench "channelAnnouncementHash" $
+          nf channelAnnouncementHash encodedChannelAnnouncement
+      , bench "nodeAnnouncementHash" $
+          nf nodeAnnouncementHash encodedNodeAnnouncement
+      , bench "channelUpdateHash" $
+          nf channelUpdateHash encodedChannelUpdate
+      , bench "channelUpdateChecksum" $
+          nf channelUpdateChecksum encodedChannelUpdate
+      ]
+  , bgroup "validate"
+      [ bench "channelAnnouncement" $
+          nf validateChannelAnnouncement testChannelAnnouncement
+      , bench "nodeAnnouncement" $
+          nf validateNodeAnnouncement testNodeAnnouncement
+      , bench "channelUpdate" $
+          nf validateChannelUpdate testChannelUpdate
+      , bench "queryChannelRange" $
+          nf validateQueryChannelRange testQueryChannelRange
+      , bench "replyChannelRange" $
+          nf validateReplyChannelRange testReplyChannelRange
       ]
   ]
