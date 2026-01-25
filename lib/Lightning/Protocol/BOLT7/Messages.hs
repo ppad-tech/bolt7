@@ -39,7 +39,7 @@ module Lightning.Protocol.BOLT7.Messages (
 
 import Control.DeepSeq (NFData)
 import Data.ByteString (ByteString)
-import Data.Word (Word8, Word16, Word32, Word64)
+import Data.Word (Word8, Word16, Word32)
 import GHC.Generics (Generic)
 import Lightning.Protocol.BOLT1 (TlvStream)
 import Lightning.Protocol.BOLT7.Types

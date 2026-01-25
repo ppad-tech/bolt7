@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DeriveGeneric #-}
 
 -- |
 -- Module: Lightning.Protocol.BOLT7.Codec
@@ -42,11 +43,13 @@ module Lightning.Protocol.BOLT7.Codec (
   , decodeGossipTimestampFilter
   ) where
 
+import Control.DeepSeq (NFData)
 import Data.Bits ((.&.))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Word (Word8, Word16, Word32, Word64)
-import Lightning.Protocol.BOLT1 (TlvStream(..))
+import GHC.Generics (Generic)
+import Lightning.Protocol.BOLT1 (unsafeTlvStream)
 import qualified Lightning.Protocol.BOLT1.Prim as Prim
 import qualified Lightning.Protocol.BOLT1.TLV as TLV
 import Lightning.Protocol.BOLT7.Messages
@@ -57,7 +60,9 @@ import Lightning.Protocol.BOLT7.Types
 -- | Encoding errors.
 data EncodeError
   = EncodeLengthOverflow  -- ^ Field too large for u16 length prefix
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+
+instance NFData EncodeError
 
 -- | Decoding errors.
 data DecodeError
@@ -72,7 +77,9 @@ data DecodeError
   | DecodeInvalidAlias               -- ^ Invalid alias field
   | DecodeInvalidAddress             -- ^ Invalid address encoding
   | DecodeTlvError                   -- ^ TLV decoding error
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+
+instance NFData DecodeError
 
 -- Primitive helpers -----------------------------------------------------------
 
@@ -85,29 +92,23 @@ decodeU8 bs
 
 -- | Decode u16 (big-endian).
 decodeU16 :: ByteString -> Either DecodeError (Word16, ByteString)
-decodeU16 bs
-  | BS.length bs < 2 = Left DecodeInsufficientBytes
-  | otherwise =
-      let (bytes, rest) = BS.splitAt 2 bs
-      in  Right (Prim.word16 bytes, rest)
+decodeU16 bs = case Prim.decodeU16 bs of
+  Nothing -> Left DecodeInsufficientBytes
+  Just r  -> Right r
 {-# INLINE decodeU16 #-}
 
 -- | Decode u32 (big-endian).
 decodeU32 :: ByteString -> Either DecodeError (Word32, ByteString)
-decodeU32 bs
-  | BS.length bs < 4 = Left DecodeInsufficientBytes
-  | otherwise =
-      let (bytes, rest) = BS.splitAt 4 bs
-      in  Right (Prim.word32 bytes, rest)
+decodeU32 bs = case Prim.decodeU32 bs of
+  Nothing -> Left DecodeInsufficientBytes
+  Just r  -> Right r
 {-# INLINE decodeU32 #-}
 
 -- | Decode u64 (big-endian).
 decodeU64 :: ByteString -> Either DecodeError (Word64, ByteString)
-decodeU64 bs
-  | BS.length bs < 8 = Left DecodeInsufficientBytes
-  | otherwise =
-      let (bytes, rest) = BS.splitAt 8 bs
-      in  Right (Prim.word64 bytes, rest)
+decodeU64 bs = case Prim.decodeU64 bs of
+  Nothing -> Left DecodeInsufficientBytes
+  Just r  -> Right r
 {-# INLINE decodeU64 #-}
 
 -- | Decode fixed-length bytes.
@@ -222,8 +223,8 @@ decodeAddresses bs = do
       | BS.null d = Right []
       | otherwise = do
           (addr, d') <- parseOneAddr d
-          rest <- parseAddrs d'
-          Right (addr : rest)
+          addrs <- parseAddrs d'
+          Right (addr : addrs)
 
     parseOneAddr :: ByteString -> Either DecodeError (Address, ByteString)
     parseOneAddr d = do
@@ -263,7 +264,7 @@ encodeChannelAnnouncement msg = mconcat
   , getSignature (channelAnnNodeSig2 msg)
   , getSignature (channelAnnBitcoinSig1 msg)
   , getSignature (channelAnnBitcoinSig2 msg)
-  , Prim.u16 (fromIntegral $ BS.length features)
+  , Prim.encodeU16 (fromIntegral $ BS.length features)
   , features
   , getChainHash (channelAnnChainHash msg)
   , getShortChannelId (channelAnnShortChanId msg)
@@ -286,8 +287,8 @@ decodeChannelAnnouncement bs = do
   (features, bs5)    <- decodeFeatureBits bs4
   (chainH, bs6)      <- decodeChainHash bs5
   (scid, bs7)        <- decodeShortChannelId bs6
-  (nodeId1, bs8)     <- decodeNodeId bs7
-  (nodeId2, bs9)     <- decodeNodeId bs8
+  (nid1, bs8)        <- decodeNodeId bs7
+  (nid2, bs9)        <- decodeNodeId bs8
   (btcKey1, bs10)    <- decodePoint bs9
   (btcKey2, rest)    <- decodePoint bs10
   let msg = ChannelAnnouncement
@@ -298,8 +299,8 @@ decodeChannelAnnouncement bs = do
         , channelAnnFeatures    = features
         , channelAnnChainHash   = chainH
         , channelAnnShortChanId = scid
-        , channelAnnNodeId1     = nodeId1
-        , channelAnnNodeId2     = nodeId2
+        , channelAnnNodeId1     = nid1
+        , channelAnnNodeId2     = nid2
         , channelAnnBitcoinKey1 = btcKey1
         , channelAnnBitcoinKey2 = btcKey2
         }
@@ -316,13 +317,13 @@ encodeNodeAnnouncement msg = do
     then Left EncodeLengthOverflow
     else Right $ mconcat
       [ getSignature (nodeAnnSignature msg)
-      , Prim.u16 (fromIntegral $ BS.length features)
+      , Prim.encodeU16 (fromIntegral $ BS.length features)
       , features
-      , Prim.u32 (nodeAnnTimestamp msg)
+      , Prim.encodeU32 (nodeAnnTimestamp msg)
       , getNodeId (nodeAnnNodeId msg)
       , getRgbColor (nodeAnnRgbColor msg)
       , getAlias (nodeAnnAlias msg)
-      , Prim.u16 (fromIntegral $ BS.length addrData)
+      , Prim.encodeU16 (fromIntegral $ BS.length addrData)
       , addrData
       ]
 
@@ -334,23 +335,23 @@ encodeAddresses addrs = Right $ mconcat (map encodeAddress addrs)
     encodeAddress (AddrIPv4 a port) = mconcat
       [ BS.singleton 1
       , getIPv4Addr a
-      , Prim.u16 port
+      , Prim.encodeU16 port
       ]
     encodeAddress (AddrIPv6 a port) = mconcat
       [ BS.singleton 2
       , getIPv6Addr a
-      , Prim.u16 port
+      , Prim.encodeU16 port
       ]
     encodeAddress (AddrTorV3 a port) = mconcat
       [ BS.singleton 4
       , getTorV3Addr a
-      , Prim.u16 port
+      , Prim.encodeU16 port
       ]
     encodeAddress (AddrDNS host port) = mconcat
       [ BS.singleton 5
       , BS.singleton (fromIntegral $ BS.length host)
       , host
-      , Prim.u16 port
+      , Prim.encodeU16 port
       ]
 
 -- | Decode node_announcement message.
@@ -383,16 +384,16 @@ encodeChannelUpdate msg = mconcat
   [ getSignature (chanUpdateSignature msg)
   , getChainHash (chanUpdateChainHash msg)
   , getShortChannelId (chanUpdateShortChanId msg)
-  , Prim.u32 (chanUpdateTimestamp msg)
+  , Prim.encodeU32 (chanUpdateTimestamp msg)
   , BS.singleton (chanUpdateMsgFlags msg)
   , BS.singleton (chanUpdateChanFlags msg)
-  , Prim.u16 (chanUpdateCltvExpDelta msg)
-  , Prim.u64 (chanUpdateHtlcMinMsat msg)
-  , Prim.u32 (chanUpdateFeeBaseMsat msg)
-  , Prim.u32 (chanUpdateFeeProportional msg)
+  , Prim.encodeU16 (chanUpdateCltvExpDelta msg)
+  , Prim.encodeU64 (chanUpdateHtlcMinMsat msg)
+  , Prim.encodeU32 (chanUpdateFeeBaseMsat msg)
+  , Prim.encodeU32 (chanUpdateFeeProportional msg)
   , case chanUpdateHtlcMaxMsat msg of
       Nothing -> BS.empty
-      Just m  -> Prim.u64 m
+      Just m  -> Prim.encodeU64 m
   ]
 
 -- | Decode channel_update message.
@@ -416,17 +417,17 @@ decodeChannelUpdate bs = do
       Right (Just m, r)
     else Right (Nothing, bs10)
   let msg = ChannelUpdate
-        { chanUpdateSignature      = sig
-        , chanUpdateChainHash      = chainH
-        , chanUpdateShortChanId    = scid
-        , chanUpdateTimestamp      = timestamp
-        , chanUpdateMsgFlags       = msgFlags
-        , chanUpdateChanFlags      = chanFlags
-        , chanUpdateCltvExpDelta   = cltvDelta
-        , chanUpdateHtlcMinMsat    = htlcMin
-        , chanUpdateFeeBaseMsat    = feeBase
+        { chanUpdateSignature       = sig
+        , chanUpdateChainHash       = chainH
+        , chanUpdateShortChanId     = scid
+        , chanUpdateTimestamp       = timestamp
+        , chanUpdateMsgFlags        = msgFlags
+        , chanUpdateChanFlags       = chanFlags
+        , chanUpdateCltvExpDelta    = cltvDelta
+        , chanUpdateHtlcMinMsat     = htlcMin
+        , chanUpdateFeeBaseMsat     = feeBase
         , chanUpdateFeeProportional = feeProp
-        , chanUpdateHtlcMaxMsat    = htlcMax
+        , chanUpdateHtlcMaxMsat     = htlcMax
         }
   Right (msg, rest)
 
@@ -469,7 +470,7 @@ encodeQueryShortChannelIds msg = do
     then Left EncodeLengthOverflow
     else Right $ mconcat
       [ getChainHash (queryScidsChainHash msg)
-      , Prim.u16 (fromIntegral $ BS.length scidData)
+      , Prim.encodeU16 (fromIntegral $ BS.length scidData)
       , scidData
       , TLV.encodeTlvStream (queryScidsTlvs msg)
       ]
@@ -482,8 +483,8 @@ decodeQueryShortChannelIds bs = do
   (chainH, bs1)   <- decodeChainHash bs
   (scidData, bs2) <- decodeLenPrefixed bs1
   let tlvs = case TLV.decodeTlvStreamRaw bs2 of
-        Left _       -> TlvStream []
-        Right (t, _) -> t
+        Left _  -> unsafeTlvStream []
+        Right t -> t
   let msg = QueryShortChannelIds
         { queryScidsChainHash = chainH
         , queryScidsData      = scidData
@@ -515,8 +516,8 @@ decodeReplyShortChannelIdsEnd bs = do
 encodeQueryChannelRange :: QueryChannelRange -> ByteString
 encodeQueryChannelRange msg = mconcat
   [ getChainHash (queryRangeChainHash msg)
-  , Prim.u32 (queryRangeFirstBlock msg)
-  , Prim.u32 (queryRangeNumBlocks msg)
+  , Prim.encodeU32 (queryRangeFirstBlock msg)
+  , Prim.encodeU32 (queryRangeNumBlocks msg)
   , TLV.encodeTlvStream (queryRangeTlvs msg)
   ]
 
@@ -528,8 +529,8 @@ decodeQueryChannelRange bs = do
   (firstBlock, bs2) <- decodeU32 bs1
   (numBlocks, bs3)  <- decodeU32 bs2
   let tlvs = case TLV.decodeTlvStreamRaw bs3 of
-        Left _       -> TlvStream []
-        Right (t, _) -> t
+        Left _  -> unsafeTlvStream []
+        Right t -> t
   let msg = QueryChannelRange
         { queryRangeChainHash  = chainH
         , queryRangeFirstBlock = firstBlock
@@ -546,10 +547,10 @@ encodeReplyChannelRange msg = do
     then Left EncodeLengthOverflow
     else Right $ mconcat
       [ getChainHash (replyRangeChainHash msg)
-      , Prim.u32 (replyRangeFirstBlock msg)
-      , Prim.u32 (replyRangeNumBlocks msg)
+      , Prim.encodeU32 (replyRangeFirstBlock msg)
+      , Prim.encodeU32 (replyRangeNumBlocks msg)
       , BS.singleton (replyRangeSyncComplete msg)
-      , Prim.u16 (fromIntegral $ BS.length rangeData)
+      , Prim.encodeU16 (fromIntegral $ BS.length rangeData)
       , rangeData
       , TLV.encodeTlvStream (replyRangeTlvs msg)
       ]
@@ -558,14 +559,14 @@ encodeReplyChannelRange msg = do
 decodeReplyChannelRange :: ByteString
                         -> Either DecodeError (ReplyChannelRange, ByteString)
 decodeReplyChannelRange bs = do
-  (chainH, bs1)      <- decodeChainHash bs
-  (firstBlock, bs2)  <- decodeU32 bs1
-  (numBlocks, bs3)   <- decodeU32 bs2
+  (chainH, bs1)       <- decodeChainHash bs
+  (firstBlock, bs2)   <- decodeU32 bs1
+  (numBlocks, bs3)    <- decodeU32 bs2
   (syncComplete, bs4) <- decodeU8 bs3
-  (rangeData, bs5)   <- decodeLenPrefixed bs4
+  (rangeData, bs5)    <- decodeLenPrefixed bs4
   let tlvs = case TLV.decodeTlvStreamRaw bs5 of
-        Left _       -> TlvStream []
-        Right (t, _) -> t
+        Left _  -> unsafeTlvStream []
+        Right t -> t
   let msg = ReplyChannelRange
         { replyRangeChainHash    = chainH
         , replyRangeFirstBlock   = firstBlock
@@ -580,8 +581,8 @@ decodeReplyChannelRange bs = do
 encodeGossipTimestampFilter :: GossipTimestampFilter -> ByteString
 encodeGossipTimestampFilter msg = mconcat
   [ getChainHash (gossipFilterChainHash msg)
-  , Prim.u32 (gossipFilterFirstTimestamp msg)
-  , Prim.u32 (gossipFilterTimestampRange msg)
+  , Prim.encodeU32 (gossipFilterFirstTimestamp msg)
+  , Prim.encodeU32 (gossipFilterTimestampRange msg)
   ]
 
 -- | Decode gossip_timestamp_filter message.
@@ -589,9 +590,9 @@ decodeGossipTimestampFilter :: ByteString
                             -> Either DecodeError
                                  (GossipTimestampFilter, ByteString)
 decodeGossipTimestampFilter bs = do
-  (chainH, bs1)         <- decodeChainHash bs
-  (firstTs, bs2)        <- decodeU32 bs1
-  (tsRange, rest)       <- decodeU32 bs2
+  (chainH, bs1)   <- decodeChainHash bs
+  (firstTs, bs2)  <- decodeU32 bs1
+  (tsRange, rest) <- decodeU32 bs2
   let msg = GossipTimestampFilter
         { gossipFilterChainHash      = chainH
         , gossipFilterFirstTimestamp = firstTs

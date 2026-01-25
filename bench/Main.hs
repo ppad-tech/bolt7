@@ -13,7 +13,7 @@ module Main where
 
 import Criterion.Main
 import qualified Data.ByteString as BS
-import Lightning.Protocol.BOLT1 (TlvStream(..))
+import Lightning.Protocol.BOLT1 (TlvStream, unsafeTlvStream)
 import Lightning.Protocol.BOLT7
 
 -- Test data construction ------------------------------------------------------
@@ -93,7 +93,7 @@ testAlias = case alias zeroBytes32 of
 
 -- | Empty TLV stream.
 emptyTlvs :: TlvStream
-emptyTlvs = TlvStream []
+emptyTlvs = unsafeTlvStream []
 {-# NOINLINE emptyTlvs #-}
 
 -- | Empty feature bits.
