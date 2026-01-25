@@ -41,6 +41,10 @@ module Lightning.Protocol.BOLT7.Codec (
   , decodeReplyChannelRange
   , encodeGossipTimestampFilter
   , decodeGossipTimestampFilter
+
+  -- * Short channel ID encoding
+  , encodeShortChannelIdList
+  , decodeShortChannelIdList
   ) where
 
 import Control.DeepSeq (NFData)
@@ -599,3 +603,44 @@ decodeGossipTimestampFilter bs = do
         , gossipFilterTimestampRange = tsRange
         }
   Right (msg, rest)
+
+-- Short channel ID list encoding -----------------------------------------------
+
+-- | Encode a list of short channel IDs as concatenated 8-byte values.
+--
+-- This produces encoded_short_ids data with encoding type 0 (uncompressed).
+-- The first byte is the encoding type (0), followed by the concatenated SCIDs.
+--
+-- Note: This does NOT sort the SCIDs. The caller should ensure they are in
+-- ascending order if that's required by the protocol context.
+encodeShortChannelIdList :: [ShortChannelId] -> ByteString
+encodeShortChannelIdList scids = BS.cons 0 $
+  mconcat (map getShortChannelId scids)
+{-# INLINE encodeShortChannelIdList #-}
+
+-- | Decode a list of short channel IDs from encoded_short_ids data.
+--
+-- Supports encoding type 0 (uncompressed). Other encoding types will fail.
+decodeShortChannelIdList :: ByteString
+                         -> Either DecodeError [ShortChannelId]
+decodeShortChannelIdList bs
+  | BS.null bs = Left DecodeInsufficientBytes
+  | otherwise = do
+      let encType = BS.index bs 0
+          payload = BS.drop 1 bs
+      case encType of
+        0 -> decodeUncompressedScids payload
+        _ -> Left DecodeInvalidShortChannelId  -- Unsupported encoding type
+  where
+    decodeUncompressedScids :: ByteString -> Either DecodeError [ShortChannelId]
+    decodeUncompressedScids !d
+      | BS.null d = Right []
+      | BS.length d < shortChannelIdLen = Left DecodeInsufficientBytes
+      | otherwise = do
+          let (scidBytes, rest) = BS.splitAt shortChannelIdLen d
+          case shortChannelId scidBytes of
+            Nothing -> Left DecodeInvalidShortChannelId
+            Just scid -> do
+              scids <- decodeUncompressedScids rest
+              Right (scid : scids)
+{-# INLINE decodeShortChannelIdList #-}

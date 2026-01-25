@@ -19,6 +19,7 @@ main = defaultMain $ testGroup "ppad-bolt7" [
   , channel_update_tests
   , announcement_signatures_tests
   , query_tests
+  , scid_list_tests
   , error_tests
   , property_tests
   ]
@@ -325,6 +326,45 @@ query_tests = testGroup "Query Messages" [
           Right (decoded, _) -> decoded @?= msg
           Left e -> assertFailure $ "decode failed: " ++ show e
     ]
+  ]
+
+-- SCID List Tests ------------------------------------------------------------
+
+scid_list_tests :: TestTree
+scid_list_tests = testGroup "SCID List Encoding" [
+    testCase "encode/decode roundtrip empty list" $ do
+      let encoded = encodeShortChannelIdList []
+      case decodeShortChannelIdList encoded of
+        Right decoded -> decoded @?= []
+        Left e -> assertFailure $ "decode failed: " ++ show e
+  , testCase "encode/decode roundtrip single SCID" $ do
+      let scids = [mkShortChannelId 539268 845 1]
+          encoded = encodeShortChannelIdList scids
+      case decodeShortChannelIdList encoded of
+        Right decoded -> decoded @?= scids
+        Left e -> assertFailure $ "decode failed: " ++ show e
+  , testCase "encode/decode roundtrip multiple SCIDs" $ do
+      let scids = [ mkShortChannelId 100000 1 0
+                  , mkShortChannelId 200000 2 1
+                  , mkShortChannelId 300000 3 2
+                  ]
+          encoded = encodeShortChannelIdList scids
+      case decodeShortChannelIdList encoded of
+        Right decoded -> decoded @?= scids
+        Left e -> assertFailure $ "decode failed: " ++ show e
+  , testCase "encoding has correct format" $ do
+      let scids = [mkShortChannelId 1 2 3]
+          encoded = encodeShortChannelIdList scids
+      -- First byte should be 0 (encoding type)
+      BS.index encoded 0 @?= 0
+      -- Total length: 1 (type) + 8 (SCID) = 9
+      BS.length encoded @?= 9
+  , testCase "decode rejects unknown encoding type" $ do
+      -- Encoding type 1 (zlib compressed) is not supported
+      let badEncoded = BS.cons 1 (getShortChannelId testShortChannelId)
+      case decodeShortChannelIdList badEncoded of
+        Left _ -> pure ()
+        Right _ -> assertFailure "should reject encoding type 1"
   ]
 
 -- Error Tests -----------------------------------------------------------------
