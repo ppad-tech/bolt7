@@ -79,9 +79,9 @@ encode/decode support, validation, and signature verification.
 
 **Dependencies:** Phase 2
 
-## Phase 4: Signature Hash Computation
+## Phase 4: Signature Hash and Checksum Computation
 
-**Goal:** Support signature verification for gossip messages.
+**Goal:** Support signature verification and checksums for gossip messages.
 
 **Tasks:**
 1. Add `channelAnnouncementHash` function:
@@ -94,13 +94,16 @@ encode/decode support, validation, and signature verification.
 3. Add `channelUpdateHash` function:
    - Double-SHA256 of message starting after signature field
 
-4. Add checksum computation for channel_update:
-   - CRC32C per RFC3720
-   - Excludes signature and timestamp fields
+4. Add internal `Lightning.Protocol.BOLT7.CRC32C` helper module:
+   - Implement CRC32C (Castagnoli polynomial 0x1EDC6F41) per RFC3720
+   - Pure Haskell implementation, no external dependencies
+   - Can be refactored into ppad-crc32c later if needed elsewhere
+
+5. Add `channelUpdateChecksum` function:
+   - CRC32C of channel_update excluding signature and timestamp fields
    - Used in reply_channel_range checksums_tlv
 
 **Dependencies:** Phase 3
-**External dependency:** May need ppad-crc32c or similar
 
 ## Phase 5: Validation Module
 
@@ -212,17 +215,19 @@ Phases 4 and 5 can proceed in parallel after Phase 3.
 
 ## Open Questions
 
-1. **CRC32C dependency:** Need to decide whether to add ppad-crc32c or
-   implement inline. Required for channel_update checksums in
-   reply_channel_range.
-
-2. **Signature verification:** This library provides hash computation only.
+1. **Signature verification:** This library provides hash computation only.
    Actual verification requires ppad-secp256k1 and is left to the caller.
    Should we add optional verification helpers?
 
-3. **Zlib compression:** Encoding type 1 for encoded_short_ids uses zlib.
+2. **Zlib compression:** Encoding type 1 for encoded_short_ids uses zlib.
    Spec says MUST NOT use, but we may need to decode it. Add zlib dependency
    or reject?
+
+## Resolved
+
+1. **CRC32C:** Implement in internal helper module
+   `Lightning.Protocol.BOLT7.CRC32C`. Refactor to ppad-crc32c later if
+   needed elsewhere.
 
 ---
 
