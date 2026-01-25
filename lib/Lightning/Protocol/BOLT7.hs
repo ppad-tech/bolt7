@@ -22,6 +22,10 @@ module Lightning.Protocol.BOLT7 (
   -- | Re-exported from "Lightning.Protocol.BOLT7.Codec".
   , module Lightning.Protocol.BOLT7.Codec
 
+  -- * Hash functions
+  -- | Re-exported from "Lightning.Protocol.BOLT7.Hash".
+  , module Lightning.Protocol.BOLT7.Hash
+
   -- $messagetypes
 
   -- ** Channel announcement
@@ -38,6 +42,7 @@ module Lightning.Protocol.BOLT7 (
   ) where
 
 import Lightning.Protocol.BOLT7.Codec
+import Lightning.Protocol.BOLT7.Hash
 import Lightning.Protocol.BOLT7.Messages
 import Lightning.Protocol.BOLT7.Types
 

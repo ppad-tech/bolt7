@@ -7,6 +7,7 @@ import Data.Maybe (fromJust)
 import Data.Word (Word16, Word32)
 import Lightning.Protocol.BOLT1 (TlvStream, unsafeTlvStream)
 import Lightning.Protocol.BOLT7
+import Lightning.Protocol.BOLT7.CRC32C (crc32c)
 import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Tasty.QuickCheck
@@ -20,6 +21,7 @@ main = defaultMain $ testGroup "ppad-bolt7" [
   , announcement_signatures_tests
   , query_tests
   , scid_list_tests
+  , hash_tests
   , error_tests
   , property_tests
   ]
@@ -365,6 +367,117 @@ scid_list_tests = testGroup "SCID List Encoding" [
       case decodeShortChannelIdList badEncoded of
         Left _ -> pure ()
         Right _ -> assertFailure "should reject encoding type 1"
+  ]
+
+-- Hash Tests -----------------------------------------------------------------
+
+hash_tests :: TestTree
+hash_tests = testGroup "Hash Functions" [
+    testGroup "CRC32C" [
+      testCase "known test vector '123456789'" $ do
+        -- Standard CRC-32C test vector
+        crc32c "123456789" @?= 0xe3069283
+    , testCase "empty string" $ do
+        crc32c "" @?= 0x00000000
+    ]
+  , testGroup "Signature Hashes" [
+      testCase "channelAnnouncementHash produces 32 bytes" $ do
+        -- Create a minimal valid encoded message
+        let msg = encodeChannelAnnouncement ChannelAnnouncement
+              { channelAnnNodeSig1    = testSignature
+              , channelAnnNodeSig2    = testSignature
+              , channelAnnBitcoinSig1 = testSignature
+              , channelAnnBitcoinSig2 = testSignature
+              , channelAnnFeatures    = emptyFeatures
+              , channelAnnChainHash   = testChainHash
+              , channelAnnShortChanId = testShortChannelId
+              , channelAnnNodeId1     = testNodeId
+              , channelAnnNodeId2     = testNodeId2
+              , channelAnnBitcoinKey1 = testPoint
+              , channelAnnBitcoinKey2 = testPoint
+              }
+            hashVal = channelAnnouncementHash msg
+        BS.length hashVal @?= 32
+    , testCase "nodeAnnouncementHash produces 32 bytes" $ do
+        case encodeNodeAnnouncement NodeAnnouncement
+              { nodeAnnSignature = testSignature
+              , nodeAnnFeatures  = emptyFeatures
+              , nodeAnnTimestamp = 1234567890
+              , nodeAnnNodeId    = testNodeId
+              , nodeAnnRgbColor  = testRgbColor
+              , nodeAnnAlias     = testAlias
+              , nodeAnnAddresses = []
+              } of
+          Left e -> assertFailure $ "encode failed: " ++ show e
+          Right msg -> do
+            let hashVal = nodeAnnouncementHash msg
+            BS.length hashVal @?= 32
+    , testCase "channelUpdateHash produces 32 bytes" $ do
+        let msg = encodeChannelUpdate ChannelUpdate
+              { chanUpdateSignature       = testSignature
+              , chanUpdateChainHash       = testChainHash
+              , chanUpdateShortChanId     = testShortChannelId
+              , chanUpdateTimestamp       = 1234567890
+              , chanUpdateMsgFlags        = 0x00
+              , chanUpdateChanFlags       = 0x00
+              , chanUpdateCltvExpDelta    = 144
+              , chanUpdateHtlcMinMsat     = 1000
+              , chanUpdateFeeBaseMsat     = 1000
+              , chanUpdateFeeProportional = 100
+              , chanUpdateHtlcMaxMsat     = Nothing
+              }
+            hashVal = channelUpdateHash msg
+        BS.length hashVal @?= 32
+    ]
+  , testGroup "Checksum" [
+      testCase "channelUpdateChecksum produces consistent result" $ do
+        -- The checksum should be deterministic
+        let msg = encodeChannelUpdate ChannelUpdate
+              { chanUpdateSignature       = testSignature
+              , chanUpdateChainHash       = testChainHash
+              , chanUpdateShortChanId     = testShortChannelId
+              , chanUpdateTimestamp       = 1234567890
+              , chanUpdateMsgFlags        = 0x00
+              , chanUpdateChanFlags       = 0x00
+              , chanUpdateCltvExpDelta    = 144
+              , chanUpdateHtlcMinMsat     = 1000
+              , chanUpdateFeeBaseMsat     = 1000
+              , chanUpdateFeeProportional = 100
+              , chanUpdateHtlcMaxMsat     = Nothing
+              }
+            cs1 = channelUpdateChecksum msg
+            cs2 = channelUpdateChecksum msg
+        cs1 @?= cs2
+    , testCase "different timestamps produce same checksum" $ do
+        -- Checksum excludes timestamp field
+        let msg1 = encodeChannelUpdate ChannelUpdate
+              { chanUpdateSignature       = testSignature
+              , chanUpdateChainHash       = testChainHash
+              , chanUpdateShortChanId     = testShortChannelId
+              , chanUpdateTimestamp       = 1000000000
+              , chanUpdateMsgFlags        = 0x00
+              , chanUpdateChanFlags       = 0x00
+              , chanUpdateCltvExpDelta    = 144
+              , chanUpdateHtlcMinMsat     = 1000
+              , chanUpdateFeeBaseMsat     = 1000
+              , chanUpdateFeeProportional = 100
+              , chanUpdateHtlcMaxMsat     = Nothing
+              }
+            msg2 = encodeChannelUpdate ChannelUpdate
+              { chanUpdateSignature       = testSignature
+              , chanUpdateChainHash       = testChainHash
+              , chanUpdateShortChanId     = testShortChannelId
+              , chanUpdateTimestamp       = 2000000000
+              , chanUpdateMsgFlags        = 0x00
+              , chanUpdateChanFlags       = 0x00
+              , chanUpdateCltvExpDelta    = 144
+              , chanUpdateHtlcMinMsat     = 1000
+              , chanUpdateFeeBaseMsat     = 1000
+              , chanUpdateFeeProportional = 100
+              , chanUpdateHtlcMaxMsat     = Nothing
+              }
+        channelUpdateChecksum msg1 @?= channelUpdateChecksum msg2
+    ]
   ]
 
 -- Error Tests -----------------------------------------------------------------
