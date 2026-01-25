@@ -12,7 +12,6 @@
 module Main where
 
 import qualified Data.ByteString as BS
-import Lightning.Protocol.BOLT1 (TlvStream(..))
 import Lightning.Protocol.BOLT7
 import Weigh
 
