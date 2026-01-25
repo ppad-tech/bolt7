@@ -26,6 +26,10 @@ module Lightning.Protocol.BOLT7 (
   -- | Re-exported from "Lightning.Protocol.BOLT7.Hash".
   , module Lightning.Protocol.BOLT7.Hash
 
+  -- * Validation functions
+  -- | Re-exported from "Lightning.Protocol.BOLT7.Validate".
+  , module Lightning.Protocol.BOLT7.Validate
+
   -- $messagetypes
 
   -- ** Channel announcement
@@ -45,6 +49,7 @@ import Lightning.Protocol.BOLT7.Codec
 import Lightning.Protocol.BOLT7.Hash
 import Lightning.Protocol.BOLT7.Messages
 import Lightning.Protocol.BOLT7.Types
+import Lightning.Protocol.BOLT7.Validate
 
 -- $messagetypes
 --

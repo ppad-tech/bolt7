@@ -30,6 +30,7 @@ library
       Lightning.Protocol.BOLT7.Hash
       Lightning.Protocol.BOLT7.Messages
       Lightning.Protocol.BOLT7.Types
+      Lightning.Protocol.BOLT7.Validate
   build-depends:
       base >= 4.9 && < 5
     , bytestring >= 0.9 && < 0.13

@@ -22,6 +22,7 @@ main = defaultMain $ testGroup "ppad-bolt7" [
   , query_tests
   , scid_list_tests
   , hash_tests
+  , validation_tests
   , error_tests
   , property_tests
   ]
@@ -477,6 +478,94 @@ hash_tests = testGroup "Hash Functions" [
               , chanUpdateHtlcMaxMsat     = Nothing
               }
         channelUpdateChecksum msg1 @?= channelUpdateChecksum msg2
+    ]
+  ]
+
+-- Validation Tests -----------------------------------------------------------
+
+validation_tests :: TestTree
+validation_tests = testGroup "Validation" [
+    testGroup "ChannelAnnouncement" [
+      testCase "valid announcement passes" $ do
+        let msg = ChannelAnnouncement
+              { channelAnnNodeSig1    = testSignature
+              , channelAnnNodeSig2    = testSignature
+              , channelAnnBitcoinSig1 = testSignature
+              , channelAnnBitcoinSig2 = testSignature
+              , channelAnnFeatures    = emptyFeatures
+              , channelAnnChainHash   = testChainHash
+              , channelAnnShortChanId = testShortChannelId
+              , channelAnnNodeId1     = testNodeId2  -- 0x02... < 0x03...
+              , channelAnnNodeId2     = testNodeId   -- 0x03...
+              , channelAnnBitcoinKey1 = testPoint
+              , channelAnnBitcoinKey2 = testPoint
+              }
+        validateChannelAnnouncement msg @?= Right ()
+    , testCase "rejects wrong node_id order" $ do
+        let msg = ChannelAnnouncement
+              { channelAnnNodeSig1    = testSignature
+              , channelAnnNodeSig2    = testSignature
+              , channelAnnBitcoinSig1 = testSignature
+              , channelAnnBitcoinSig2 = testSignature
+              , channelAnnFeatures    = emptyFeatures
+              , channelAnnChainHash   = testChainHash
+              , channelAnnShortChanId = testShortChannelId
+              , channelAnnNodeId1     = testNodeId   -- 0x03... > 0x02...
+              , channelAnnNodeId2     = testNodeId2  -- 0x02...
+              , channelAnnBitcoinKey1 = testPoint
+              , channelAnnBitcoinKey2 = testPoint
+              }
+        validateChannelAnnouncement msg @?= Left ValidateNodeIdOrdering
+    ]
+  , testGroup "ChannelUpdate" [
+      testCase "valid update passes" $ do
+        let msg = ChannelUpdate
+              { chanUpdateSignature       = testSignature
+              , chanUpdateChainHash       = testChainHash
+              , chanUpdateShortChanId     = testShortChannelId
+              , chanUpdateTimestamp       = 1234567890
+              , chanUpdateMsgFlags        = 0x01
+              , chanUpdateChanFlags       = 0x00
+              , chanUpdateCltvExpDelta    = 144
+              , chanUpdateHtlcMinMsat     = 1000
+              , chanUpdateFeeBaseMsat     = 1000
+              , chanUpdateFeeProportional = 100
+              , chanUpdateHtlcMaxMsat     = Just 1000000000
+              }
+        validateChannelUpdate msg @?= Right ()
+    , testCase "rejects htlc_min > htlc_max" $ do
+        let msg = ChannelUpdate
+              { chanUpdateSignature       = testSignature
+              , chanUpdateChainHash       = testChainHash
+              , chanUpdateShortChanId     = testShortChannelId
+              , chanUpdateTimestamp       = 1234567890
+              , chanUpdateMsgFlags        = 0x01
+              , chanUpdateChanFlags       = 0x00
+              , chanUpdateCltvExpDelta    = 144
+              , chanUpdateHtlcMinMsat     = 2000000000  -- > htlcMax
+              , chanUpdateFeeBaseMsat     = 1000
+              , chanUpdateFeeProportional = 100
+              , chanUpdateHtlcMaxMsat     = Just 1000000000
+              }
+        validateChannelUpdate msg @?= Left ValidateHtlcAmounts
+    ]
+  , testGroup "QueryChannelRange" [
+      testCase "valid range passes" $ do
+        let msg = QueryChannelRange
+              { queryRangeChainHash  = testChainHash
+              , queryRangeFirstBlock = 600000
+              , queryRangeNumBlocks  = 10000
+              , queryRangeTlvs       = emptyTlvs
+              }
+        validateQueryChannelRange msg @?= Right ()
+    , testCase "rejects overflow" $ do
+        let msg = QueryChannelRange
+              { queryRangeChainHash  = testChainHash
+              , queryRangeFirstBlock = maxBound  -- 0xFFFFFFFF
+              , queryRangeNumBlocks  = 10
+              , queryRangeTlvs       = emptyTlvs
+              }
+        validateQueryChannelRange msg @?= Left ValidateBlockOverflow
     ]
   ]
 
