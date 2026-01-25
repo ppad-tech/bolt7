@@ -26,6 +26,8 @@ library
   exposed-modules:
       Lightning.Protocol.BOLT7
       Lightning.Protocol.BOLT7.Codec
+      Lightning.Protocol.BOLT7.CRC32C
+      Lightning.Protocol.BOLT7.Hash
       Lightning.Protocol.BOLT7.Messages
       Lightning.Protocol.BOLT7.Types
   build-depends:
@@ -33,6 +35,7 @@ library
     , bytestring >= 0.9 && < 0.13
     , deepseq >= 1.4 && < 1.6
     , ppad-bolt1
+    , ppad-sha256 >= 0.3 && < 0.4
 
 test-suite bolt7-tests
   type:                exitcode-stdio-1.0

@@ -68,6 +68,40 @@
         "url": "git://git.ppad.tech/base16.git"
       }
     },
+    "ppad-base16_2": {
+      "inputs": {
+        "flake-utils": [
+          "ppad-sha256",
+          "ppad-base16",
+          "ppad-nixpkgs",
+          "flake-utils"
+        ],
+        "nixpkgs": [
+          "ppad-sha256",
+          "ppad-base16",
+          "ppad-nixpkgs",
+          "nixpkgs"
+        ],
+        "ppad-nixpkgs": [
+          "ppad-sha256",
+          "ppad-nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1766934151,
+        "narHash": "sha256-BUFpuLfrGXE2xi3Wa9TYCEhhRhFp175Ghxnr0JRbG2I=",
+        "ref": "master",
+        "rev": "58dfb7922401a60d5de76825fcd5f6ecbcd7afe0",
+        "revCount": 26,
+        "type": "git",
+        "url": "git://git.ppad.tech/base16.git"
+      },
+      "original": {
+        "ref": "master",
+        "type": "git",
+        "url": "git://git.ppad.tech/base16.git"
+      }
+    },
     "ppad-bolt1": {
       "inputs": {
         "flake-utils": [
@@ -116,6 +150,38 @@
         "url": "git://git.ppad.tech/nixpkgs.git"
       }
     },
+    "ppad-sha256": {
+      "inputs": {
+        "flake-utils": [
+          "ppad-sha256",
+          "ppad-nixpkgs",
+          "flake-utils"
+        ],
+        "nixpkgs": [
+          "ppad-sha256",
+          "ppad-nixpkgs",
+          "nixpkgs"
+        ],
+        "ppad-base16": "ppad-base16_2",
+        "ppad-nixpkgs": [
+          "ppad-nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1768121850,
+        "narHash": "sha256-RxgAI88nZi4o4xYj1v+GC0X5E9adae12dDSmv/GFu2Y=",
+        "ref": "master",
+        "rev": "916595b21319ca270ce8beb9c742bf7e632cccc9",
+        "revCount": 118,
+        "type": "git",
+        "url": "git://git.ppad.tech/sha256.git"
+      },
+      "original": {
+        "ref": "master",
+        "type": "git",
+        "url": "git://git.ppad.tech/sha256.git"
+      }
+    },
     "root": {
       "inputs": {
         "flake-utils": [
@@ -127,7 +193,8 @@
           "nixpkgs"
         ],
         "ppad-bolt1": "ppad-bolt1",
-        "ppad-nixpkgs": "ppad-nixpkgs"
+        "ppad-nixpkgs": "ppad-nixpkgs",
+        "ppad-sha256": "ppad-sha256"
       }
     },
     "systems": {
