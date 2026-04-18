@@ -55,6 +55,11 @@ ppad-bolt7 provides types and codecs for BOLT #7 gossip messages:
 Haddock documentation is available at
 [docs.ppad.tech/bolt7](https://docs.ppad.tech/bolt7).
 
+## Security
+
+This is a pre-release version of the library and makes no claims about
+security whatsoever.
+
 ## Development
 
 A Nix development shell is provided via flake. Enter it with:
@@ -71,6 +76,3 @@ $ cabal test
 $ cabal bench
 ```
 
-## Security
-
-This library has received no security audit. Use at your own risk.
