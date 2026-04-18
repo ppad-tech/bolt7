@@ -3,8 +3,9 @@
 
   inputs = {
     ppad-bolt1 = {
-      type = "path";
-      path = "/Users/jtobin/src/ppad/bolt1";
+      type = "git";
+      url  = "git://git.ppad.tech/bolt1.git";
+      ref  = "master";
       inputs.ppad-nixpkgs.follows = "ppad-nixpkgs";
     };
     ppad-sha256 = {
