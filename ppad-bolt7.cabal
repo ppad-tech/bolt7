@@ -35,7 +35,7 @@ library
       base >= 4.9 && < 5
     , bytestring >= 0.9 && < 0.13
     , deepseq >= 1.4 && < 1.6
-    , ppad-bolt1
+    , ppad-bolt1 >= 0.0.1 && < 0.1
     , ppad-sha256 >= 0.3 && < 0.4
 
 test-suite bolt7-tests
@@ -51,7 +51,7 @@ test-suite bolt7-tests
       base
     , bytestring
     , ppad-base16
-    , ppad-bolt1
+    , ppad-bolt1 >= 0.0.1 && < 0.1
     , ppad-bolt7
     , tasty
     , tasty-hunit
@@ -71,7 +71,7 @@ benchmark bolt7-bench
     , bytestring
     , criterion
     , deepseq
-    , ppad-bolt1
+    , ppad-bolt1 >= 0.0.1 && < 0.1
     , ppad-bolt7
 
 benchmark bolt7-weigh
@@ -87,6 +87,6 @@ benchmark bolt7-weigh
       base
     , bytestring
     , deepseq
-    , ppad-bolt1
+    , ppad-bolt1 >= 0.0.1 && < 0.1
     , ppad-bolt7
     , weigh
