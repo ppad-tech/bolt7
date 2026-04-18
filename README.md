@@ -1,5 +1,9 @@
 # ppad-bolt7
 
+[![](https://img.shields.io/hackage/v/ppad-bolt7?color=blue)](https://hackage.haskell.org/package/ppad-bolt7)
+![](https://img.shields.io/badge/license-MIT-brightgreen)
+[![](https://img.shields.io/badge/haddock-bolt7-lightblue)](https://docs.ppad.tech/bolt7)
+
 A pure Haskell implementation of
 [BOLT #7](https://github.com/lightning/bolts/blob/master/07-routing-gossip.md)
 (Lightning Network routing gossip protocol).
