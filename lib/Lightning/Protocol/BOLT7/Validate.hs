@@ -121,7 +121,7 @@ validateReplyChannelRange msg =
     checkAscending [] = Right ()
     checkAscending [_] = Right ()
     checkAscending (a:b:rest)
-      | getShortChannelId a < getShortChannelId b = checkAscending (b:rest)
+      | a < b = checkAscending (b:rest)
       | otherwise = Left ValidateScidNotAscending
 
 -- Internal helpers -----------------------------------------------------------

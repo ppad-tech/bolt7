@@ -165,7 +165,7 @@ decodeChainHash = decodeFixed chainHashLen DecodeInvalidChainHash chainHash
 decodeShortChannelId :: ByteString
                      -> Either DecodeError (ShortChannelId, ByteString)
 decodeShortChannelId =
-  decodeFixed shortChannelIdLen DecodeInvalidShortChannelId shortChannelId
+  decodeFixed shortChannelIdLen DecodeInvalidShortChannelId scidFromBytes
 {-# INLINE decodeShortChannelId #-}
 
 -- | Decode ChannelId (32 bytes).
@@ -249,17 +249,17 @@ decodeAddresses bs = do
 -- | Encode channel_announcement message.
 encodeChannelAnnouncement :: ChannelAnnouncement -> ByteString
 encodeChannelAnnouncement msg = mconcat
-  [ getSignature (channelAnnNodeSig1 msg)
-  , getSignature (channelAnnNodeSig2 msg)
-  , getSignature (channelAnnBitcoinSig1 msg)
-  , getSignature (channelAnnBitcoinSig2 msg)
+  [ unSignature (channelAnnNodeSig1 msg)
+  , unSignature (channelAnnNodeSig2 msg)
+  , unSignature (channelAnnBitcoinSig1 msg)
+  , unSignature (channelAnnBitcoinSig2 msg)
   , encodeLenPrefixed (getFeatureBits (channelAnnFeatures msg))
-  , getChainHash (channelAnnChainHash msg)
-  , getShortChannelId (channelAnnShortChanId msg)
+  , unChainHash (channelAnnChainHash msg)
+  , scidToBytes (channelAnnShortChanId msg)
   , getNodeId (channelAnnNodeId1 msg)
   , getNodeId (channelAnnNodeId2 msg)
-  , getPoint (channelAnnBitcoinKey1 msg)
-  , getPoint (channelAnnBitcoinKey2 msg)
+  , unPoint (channelAnnBitcoinKey1 msg)
+  , unPoint (channelAnnBitcoinKey2 msg)
   ]
 
 -- | Decode channel_announcement message.
@@ -302,7 +302,7 @@ encodeNodeAnnouncement msg = do
   if BS.length features > 65535
     then Left EncodeLengthOverflow
     else Right $ mconcat
-      [ getSignature (nodeAnnSignature msg)
+      [ unSignature (nodeAnnSignature msg)
       , encodeLenPrefixed features
       , Prim.encodeU32 (nodeAnnTimestamp msg)
       , getNodeId (nodeAnnNodeId msg)
@@ -365,9 +365,9 @@ decodeNodeAnnouncement bs = do
 -- | Encode channel_update message.
 encodeChannelUpdate :: ChannelUpdate -> ByteString
 encodeChannelUpdate msg = mconcat
-  [ getSignature (chanUpdateSignature msg)
-  , getChainHash (chanUpdateChainHash msg)
-  , getShortChannelId (chanUpdateShortChanId msg)
+  [ unSignature (chanUpdateSignature msg)
+  , unChainHash (chanUpdateChainHash msg)
+  , scidToBytes (chanUpdateShortChanId msg)
   , Prim.encodeU32 (chanUpdateTimestamp msg)
   , BS.singleton (encodeMessageFlags (chanUpdateMsgFlags msg))
   , BS.singleton (encodeChannelFlags (chanUpdateChanFlags msg))
@@ -422,10 +422,10 @@ decodeChannelUpdate bs = do
 -- | Encode announcement_signatures message.
 encodeAnnouncementSignatures :: AnnouncementSignatures -> ByteString
 encodeAnnouncementSignatures msg = mconcat
-  [ getChannelId (annSigChannelId msg)
-  , getShortChannelId (annSigShortChanId msg)
-  , getSignature (annSigNodeSig msg)
-  , getSignature (annSigBitcoinSig msg)
+  [ unChannelId (annSigChannelId msg)
+  , scidToBytes (annSigShortChanId msg)
+  , unSignature (annSigNodeSig msg)
+  , unSignature (annSigBitcoinSig msg)
   ]
 
 -- | Decode announcement_signatures message.
@@ -455,7 +455,7 @@ encodeQueryShortChannelIds msg = do
   if BS.length scidData > 65535
     then Left EncodeLengthOverflow
     else Right $ mconcat
-      [ getChainHash (queryScidsChainHash msg)
+      [ unChainHash (queryScidsChainHash msg)
       , encodeLenPrefixed scidData
       , TLV.encodeTlvStream (queryScidsTlvs msg)
       ]
@@ -480,7 +480,7 @@ decodeQueryShortChannelIds bs = do
 -- | Encode reply_short_channel_ids_end message.
 encodeReplyShortChannelIdsEnd :: ReplyShortChannelIdsEnd -> ByteString
 encodeReplyShortChannelIdsEnd msg = mconcat
-  [ getChainHash (replyScidsChainHash msg)
+  [ unChainHash (replyScidsChainHash msg)
   , BS.singleton (replyScidsFullInfo msg)
   ]
 
@@ -500,7 +500,7 @@ decodeReplyShortChannelIdsEnd bs = do
 -- | Encode query_channel_range message.
 encodeQueryChannelRange :: QueryChannelRange -> ByteString
 encodeQueryChannelRange msg = mconcat
-  [ getChainHash (queryRangeChainHash msg)
+  [ unChainHash (queryRangeChainHash msg)
   , Prim.encodeU32 (queryRangeFirstBlock msg)
   , Prim.encodeU32 (queryRangeNumBlocks msg)
   , TLV.encodeTlvStream (queryRangeTlvs msg)
@@ -531,7 +531,7 @@ encodeReplyChannelRange msg = do
   if BS.length rangeData > 65535
     then Left EncodeLengthOverflow
     else Right $ mconcat
-      [ getChainHash (replyRangeChainHash msg)
+      [ unChainHash (replyRangeChainHash msg)
       , Prim.encodeU32 (replyRangeFirstBlock msg)
       , Prim.encodeU32 (replyRangeNumBlocks msg)
       , BS.singleton (replyRangeSyncComplete msg)
@@ -564,7 +564,7 @@ decodeReplyChannelRange bs = do
 -- | Encode gossip_timestamp_filter message.
 encodeGossipTimestampFilter :: GossipTimestampFilter -> ByteString
 encodeGossipTimestampFilter msg = mconcat
-  [ getChainHash (gossipFilterChainHash msg)
+  [ unChainHash (gossipFilterChainHash msg)
   , Prim.encodeU32 (gossipFilterFirstTimestamp msg)
   , Prim.encodeU32 (gossipFilterTimestampRange msg)
   ]
@@ -595,7 +595,7 @@ decodeGossipTimestampFilter bs = do
 -- ascending order if that's required by the protocol context.
 encodeShortChannelIdList :: [ShortChannelId] -> ByteString
 encodeShortChannelIdList scids = BS.cons 0 $
-  mconcat (map getShortChannelId scids)
+  mconcat (map scidToBytes scids)
 {-# INLINE encodeShortChannelIdList #-}
 
 -- | Decode a list of short channel IDs from encoded_short_ids data.
@@ -618,7 +618,7 @@ decodeShortChannelIdList bs
       | BS.length d < shortChannelIdLen = Left DecodeInsufficientBytes
       | otherwise = do
           let (scidBytes, rest) = BS.splitAt shortChannelIdLen d
-          case shortChannelId scidBytes of
+          case scidFromBytes scidBytes of
             Nothing -> Left DecodeInvalidShortChannelId
             Just scid -> do
               scids <- decodeUncompressedScids rest

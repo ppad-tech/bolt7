@@ -120,11 +120,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1776481687,
-        "narHash": "sha256-1oT11gu84v1wEmOrigp6FTP1DIG7JkD1OVdgOCCPQFs=",
+        "lastModified": 1776570879,
+        "narHash": "sha256-XsgGBvYWL+sD7pDZoPPi4l39DE7GH7maNnhm8iUeB/E=",
         "ref": "master",
-        "rev": "0a19559d878ad6701d9d10fd08a32b736bcee662",
-        "revCount": 26,
+        "rev": "20ea43188d781368e5e64c7c646285a6b0aaeb94",
+        "revCount": 27,
         "type": "git",
         "url": "git://git.ppad.tech/bolt1.git"
       },
