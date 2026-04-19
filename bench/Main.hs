@@ -51,7 +51,7 @@ testChainHash = case chainHash zeroBytes32 of
 
 -- | 8-byte short channel ID.
 testShortChannelId :: ShortChannelId
-testShortChannelId = case shortChannelId zeroBytes8 of
+testShortChannelId = case scidFromBytes zeroBytes8 of
   Just s  -> s
   Nothing -> error "testShortChannelId: invalid"
 {-# NOINLINE testShortChannelId #-}
@@ -112,7 +112,7 @@ emptyFeatures = featureBits BS.empty
 testScidList :: [ShortChannelId]
 testScidList = map mkScid [1..100]
   where
-    mkScid n = case shortChannelId (BS.pack [0, 0, 0, n, 0, 0, 0, n]) of
+    mkScid n = case scidFromBytes (BS.pack [0, 0, 0, n, 0, 0, 0, n]) of
       Just s  -> s
       Nothing -> error "mkScid: invalid"
 {-# NOINLINE testScidList #-}
@@ -173,13 +173,13 @@ testChannelUpdate = ChannelUpdate
   , chanUpdateChainHash       = testChainHash
   , chanUpdateShortChanId     = testShortChannelId
   , chanUpdateTimestamp       = 1234567890
-  , chanUpdateMsgFlags        = 0x01
-  , chanUpdateChanFlags       = 0x00
-  , chanUpdateCltvExpDelta    = 144
-  , chanUpdateHtlcMinMsat     = 1000
-  , chanUpdateFeeBaseMsat     = 1000
-  , chanUpdateFeeProportional = 100
-  , chanUpdateHtlcMaxMsat     = Just 1000000000
+  , chanUpdateMsgFlags        = MessageFlags True
+  , chanUpdateChanFlags       = ChannelFlags False False
+  , chanUpdateCltvExpDelta    = CltvExpiryDelta 144
+  , chanUpdateHtlcMinMsat     = HtlcMinimumMsat 1000
+  , chanUpdateFeeBaseMsat     = FeeBaseMsat 1000
+  , chanUpdateFeeProportional = FeeProportionalMillionths 100
+  , chanUpdateHtlcMaxMsat     = Just (HtlcMaximumMsat 1000000000)
   }
 {-# NOINLINE testChannelUpdate #-}
 

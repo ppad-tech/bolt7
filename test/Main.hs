@@ -35,7 +35,7 @@ testChainHash = fromJust $ chainHash (BS.replicate 32 0x01)
 
 -- | Create a valid ShortChannelId (8 bytes).
 testShortChannelId :: ShortChannelId
-testShortChannelId = fromJust $ shortChannelId (BS.replicate 8 0xab)
+testShortChannelId = fromJust $ scidFromBytes (BS.replicate 8 0xab)
 
 -- | Create a valid ChannelId (32 bytes).
 testChannelId :: ChannelId
@@ -73,6 +73,12 @@ emptyTlvs = unsafeTlvStream []
 emptyFeatures :: FeatureBits
 emptyFeatures = featureBits BS.empty
 
+-- | Total ShortChannelId constructor for test fixtures.
+mkScid :: Word32 -> Word32 -> Word16 -> ShortChannelId
+mkScid b t o = case shortChannelId b t o of
+  Just s  -> s
+  Nothing -> error "mkScid: invalid test fixture"
+
 -- Type Tests ------------------------------------------------------------------
 
 type_tests :: TestTree
@@ -80,36 +86,36 @@ type_tests = testGroup "Types" [
     testGroup "ShortChannelId" [
       testCase "scidBlockHeight" $ do
         -- 8 bytes: block=0x123456, tx=0x789abc, output=0xdef0
-        let scid = fromJust $ shortChannelId (BS.pack
+        let scid = fromJust $ scidFromBytes (BS.pack
               [0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0])
         scidBlockHeight scid @?= 0x123456
     , testCase "scidTxIndex" $ do
-        let scid = fromJust $ shortChannelId (BS.pack
+        let scid = fromJust $ scidFromBytes (BS.pack
               [0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0])
         scidTxIndex scid @?= 0x789abc
     , testCase "scidOutputIndex" $ do
-        let scid = fromJust $ shortChannelId (BS.pack
+        let scid = fromJust $ scidFromBytes (BS.pack
               [0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0])
         scidOutputIndex scid @?= 0xdef0
-    , testCase "mkShortChannelId roundtrip" $ do
-        let scid = mkShortChannelId 539268 845 1
+    , testCase "shortChannelId roundtrip" $ do
+        let scid = fromJust $ shortChannelId 539268 845 1
         scidBlockHeight scid @?= 539268
         scidTxIndex scid @?= 845
         scidOutputIndex scid @?= 1
     , testCase "formatScid" $ do
-        let scid = mkShortChannelId 539268 845 1
+        let scid = fromJust $ shortChannelId 539268 845 1
         formatScid scid @?= "539268x845x1"
     , testCase "formatScid zero values" $ do
-        let scid = mkShortChannelId 0 0 0
+        let scid = fromJust $ shortChannelId 0 0 0
         formatScid scid @?= "0x0x0"
     ]
   , testGroup "Smart constructors" [
       testCase "chainHash rejects wrong length" $ do
         chainHash (BS.replicate 31 0x00) @?= Nothing
         chainHash (BS.replicate 33 0x00) @?= Nothing
-    , testCase "shortChannelId rejects wrong length" $ do
-        shortChannelId (BS.replicate 7 0x00) @?= Nothing
-        shortChannelId (BS.replicate 9 0x00) @?= Nothing
+    , testCase "scidFromBytes rejects wrong length" $ do
+        scidFromBytes (BS.replicate 7 0x00) @?= Nothing
+        scidFromBytes (BS.replicate 9 0x00) @?= Nothing
     , testCase "signature rejects wrong length" $ do
         signature (BS.replicate 63 0x00) @?= Nothing
         signature (BS.replicate 65 0x00) @?= Nothing
@@ -119,7 +125,7 @@ type_tests = testGroup "Types" [
     ]
   , testGroup "Constants" [
       testCase "mainnetChainHash has correct length" $ do
-        BS.length (getChainHash mainnetChainHash) @?= 32
+        BS.length (unChainHash mainnetChainHash) @?= 32
     ]
   , testGroup "NodeId ordering" [
       testCase "NodeId Ord is lexicographic" $ do
@@ -343,22 +349,22 @@ scid_list_tests = testGroup "SCID List Encoding" [
         Right decoded -> decoded @?= []
         Left e -> assertFailure $ "decode failed: " ++ show e
   , testCase "encode/decode roundtrip single SCID" $ do
-      let scids = [mkShortChannelId 539268 845 1]
+      let scids = [mkScid 539268 845 1]
           encoded = encodeShortChannelIdList scids
       case decodeShortChannelIdList encoded of
         Right decoded -> decoded @?= scids
         Left e -> assertFailure $ "decode failed: " ++ show e
   , testCase "encode/decode roundtrip multiple SCIDs" $ do
-      let scids = [ mkShortChannelId 100000 1 0
-                  , mkShortChannelId 200000 2 1
-                  , mkShortChannelId 300000 3 2
+      let scids = [ mkScid 100000 1 0
+                  , mkScid 200000 2 1
+                  , mkScid 300000 3 2
                   ]
           encoded = encodeShortChannelIdList scids
       case decodeShortChannelIdList encoded of
         Right decoded -> decoded @?= scids
         Left e -> assertFailure $ "decode failed: " ++ show e
   , testCase "encoding has correct format" $ do
-      let scids = [mkShortChannelId 1 2 3]
+      let scids = [mkScid 1 2 3]
           encoded = encodeShortChannelIdList scids
       -- First byte should be 0 (encoding type)
       BS.index encoded 0 @?= 0
@@ -366,7 +372,7 @@ scid_list_tests = testGroup "SCID List Encoding" [
       BS.length encoded @?= 9
   , testCase "decode rejects unknown encoding type" $ do
       -- Encoding type 1 (zlib compressed) is not supported
-      let badEncoded = BS.cons 1 (getShortChannelId testShortChannelId)
+      let badEncoded = BS.cons 1 (scidToBytes testShortChannelId)
       case decodeShortChannelIdList badEncoded of
         Left _ -> pure ()
         Right _ -> assertFailure "should reject encoding type 1"
