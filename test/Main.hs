@@ -615,6 +615,14 @@ property_tests = testGroup "Properties" [
       propAnnouncementSignaturesRoundtrip
   , testProperty "GossipTimestampFilter roundtrip"
       propGossipTimestampFilterRoundtrip
+  , testProperty "ChannelFlags encode/decode roundtrip"
+      propChannelFlagsRoundtrip
+  , testProperty "ShortChannelId bytes roundtrip"
+      propScidBytesRoundtrip
+  , testProperty "Hostname validates length bounds"
+      propHostnameValidation
+  , testProperty "SCID list encode/decode roundtrip"
+      propScidListRoundtrip
   ]
 
 -- Property: ChannelAnnouncement roundtrip
@@ -686,3 +694,53 @@ propGossipTimestampFilterRoundtrip firstTs tsRange = property $ do
   case decodeGossipTimestampFilter encoded of
     Right (decoded, _) -> decoded == msg
     Left _ -> False
+
+-- Property: ChannelFlags encode/decode roundtrip
+propChannelFlagsRoundtrip :: Property
+propChannelFlagsRoundtrip =
+  forAll genChannelFlags $ \cf ->
+    decodeChannelFlags (encodeChannelFlags cf) == cf
+  where
+    genChannelFlags :: Gen ChannelFlags
+    genChannelFlags = ChannelFlags
+      <$> elements [NodeOne, NodeTwo]
+      <*> elements [Enabled, Disabled]
+
+-- Property: ShortChannelId bytes roundtrip
+propScidBytesRoundtrip :: Property
+propScidBytesRoundtrip =
+  forAll (choose (0, 0xFFFFFF)) $ \bh ->
+  forAll (choose (0, 0xFFFFFF)) $ \ti ->
+  forAll arbitrary $ \oi ->
+    case shortChannelId bh ti oi of
+      Nothing -> False
+      Just scid ->
+        scidFromBytes (scidToBytes scid)
+        == Just scid
+
+-- Property: Hostname validates length bounds
+propHostnameValidation :: NonNegative Int -> Property
+propHostnameValidation (NonNegative n) = property $
+  let len = n `mod` 300
+      bs = BS.replicate len 0x61
+  in  case hostname bs of
+        Just _  -> len >= 1 && len <= 255
+        Nothing -> len == 0 || len > 255
+
+-- Property: SCID list encode/decode roundtrip
+propScidListRoundtrip :: Property
+propScidListRoundtrip =
+  forAll (listOf genScid) $ \scids ->
+    case decodeShortChannelIdList
+           (encodeShortChannelIdList scids) of
+      Right decoded -> decoded == scids
+      Left _ -> False
+  where
+    genScid :: Gen ShortChannelId
+    genScid = do
+      bh <- choose (0, 0xFFFFFF)
+      ti <- choose (0, 0xFFFFFF)
+      oi <- arbitrary
+      case shortChannelId bh ti oi of
+        Just s  -> pure s
+        Nothing -> pure testShortChannelId
