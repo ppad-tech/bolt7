@@ -50,6 +50,7 @@ module Lightning.Protocol.BOLT7.Codec (
   ) where
 
 import Control.DeepSeq (NFData)
+import Data.Bits ((.&.))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Word (Word8, Word16, Word32, Word64)
@@ -239,9 +240,12 @@ decodeAddresses bs = do
             Just a  -> Right (AddrTorV3 a port, d3)
         5 -> do  -- DNS hostname
           (hostLen, d2) <- decodeU8 d1
-          (hostBytes, d3) <- decodeBytes (fromIntegral hostLen) d2
+          (hostBytes, d3) <-
+            decodeBytes (fromIntegral hostLen) d2
           (port, d4) <- decodeU16 d3
-          Right (AddrDNS hostBytes port, d4)
+          case hostname hostBytes of
+            Nothing -> Left DecodeInvalidAddress
+            Just h  -> Right (AddrDNS h port, d4)
         _ -> Left DecodeInvalidAddress  -- Unknown address type
 
 -- Channel announcement --------------------------------------------------------
@@ -331,12 +335,14 @@ encodeAddresses addrs = Right $ mconcat (map encodeAddress addrs)
       , getTorV3Addr a
       , Prim.encodeU16 port
       ]
-    encodeAddress (AddrDNS host port) = mconcat
-      [ BS.singleton 5
-      , BS.singleton (fromIntegral $ BS.length host)
-      , host
-      , Prim.encodeU16 port
-      ]
+    encodeAddress (AddrDNS h port) =
+      let !host = getHostname h
+      in  mconcat
+        [ BS.singleton 5
+        , BS.singleton (fromIntegral $ BS.length host)
+        , host
+        , Prim.encodeU16 port
+        ]
 
 -- | Decode node_announcement message.
 decodeNodeAnnouncement :: ByteString
@@ -363,41 +369,57 @@ decodeNodeAnnouncement bs = do
 -- Channel update --------------------------------------------------------------
 
 -- | Encode channel_update message.
+--
+-- The message_flags byte is derived from the presence of
+-- 'chanUpdateHtlcMaxMsat': bit 0 is set when the field is
+-- 'Just'.
 encodeChannelUpdate :: ChannelUpdate -> ByteString
-encodeChannelUpdate msg = mconcat
-  [ unSignature (chanUpdateSignature msg)
-  , unChainHash (chanUpdateChainHash msg)
-  , scidToBytes (chanUpdateShortChanId msg)
-  , Prim.encodeU32 (chanUpdateTimestamp msg)
-  , BS.singleton (encodeMessageFlags (chanUpdateMsgFlags msg))
-  , BS.singleton (encodeChannelFlags (chanUpdateChanFlags msg))
-  , Prim.encodeU16 (getCltvExpiryDelta (chanUpdateCltvExpDelta msg))
-  , Prim.encodeU64 (getHtlcMinimumMsat (chanUpdateHtlcMinMsat msg))
-  , Prim.encodeU32 (getFeeBaseMsat (chanUpdateFeeBaseMsat msg))
-  , Prim.encodeU32 (getFeeProportionalMillionths (chanUpdateFeeProportional msg))
-  , case chanUpdateHtlcMaxMsat msg of
-      Nothing -> BS.empty
-      Just m  -> Prim.encodeU64 (getHtlcMaximumMsat m)
-  ]
+encodeChannelUpdate msg =
+  let !msgFlagsByte = case chanUpdateHtlcMaxMsat msg of
+        Nothing -> 0x00 :: Word8
+        Just _  -> 0x01
+  in  mconcat
+    [ unSignature (chanUpdateSignature msg)
+    , unChainHash (chanUpdateChainHash msg)
+    , scidToBytes (chanUpdateShortChanId msg)
+    , Prim.encodeU32 (chanUpdateTimestamp msg)
+    , BS.singleton msgFlagsByte
+    , BS.singleton (encodeChannelFlags (chanUpdateChanFlags msg))
+    , Prim.encodeU16
+        (getCltvExpiryDelta (chanUpdateCltvExpDelta msg))
+    , Prim.encodeU64
+        (getHtlcMinimumMsat (chanUpdateHtlcMinMsat msg))
+    , Prim.encodeU32
+        (getFeeBaseMsat (chanUpdateFeeBaseMsat msg))
+    , Prim.encodeU32
+        (getFeeProportionalMillionths
+          (chanUpdateFeeProportional msg))
+    , case chanUpdateHtlcMaxMsat msg of
+        Nothing -> BS.empty
+        Just m  -> Prim.encodeU64 (getHtlcMaximumMsat m)
+    ]
 
 -- | Decode channel_update message.
+--
+-- The message_flags byte is read from the wire but not stored;
+-- bit 0 determines whether 'htlc_maximum_msat' is present.
 decodeChannelUpdate :: ByteString
-                    -> Either DecodeError (ChannelUpdate, ByteString)
+                    -> Either DecodeError
+                         (ChannelUpdate, ByteString)
 decodeChannelUpdate bs = do
-  (sig, bs1)         <- decodeSignature bs
-  (chainH, bs2)      <- decodeChainHash bs1
-  (scid, bs3)        <- decodeShortChannelId bs2
-  (timestamp, bs4)   <- decodeU32 bs3
-  (msgFlagsRaw, bs5) <- decodeU8 bs4
+  (sig, bs1)          <- decodeSignature bs
+  (chainH, bs2)       <- decodeChainHash bs1
+  (scid, bs3)         <- decodeShortChannelId bs2
+  (timestamp, bs4)    <- decodeU32 bs3
+  (msgFlagsRaw, bs5)  <- decodeU8 bs4
   (chanFlagsRaw, bs6) <- decodeU8 bs5
-  (cltvDelta, bs7)   <- decodeU16 bs6
-  (htlcMin, bs8)     <- decodeU64 bs7
-  (feeBase, bs9)     <- decodeU32 bs8
-  (feeProp, bs10)    <- decodeU32 bs9
-  let msgFlags' = decodeMessageFlags msgFlagsRaw
-      chanFlags' = decodeChannelFlags chanFlagsRaw
-  -- htlc_maximum_msat is present if message_flags bit 0 is set
-  (htlcMax, rest) <- if mfHtlcMaxPresent msgFlags'
+  (cltvDelta, bs7)    <- decodeU16 bs6
+  (htlcMin, bs8)      <- decodeU64 bs7
+  (feeBase, bs9)      <- decodeU32 bs8
+  (feeProp, bs10)     <- decodeU32 bs9
+  let !chanFlags' = decodeChannelFlags chanFlagsRaw
+      !htlcMaxPresent = msgFlagsRaw .&. 0x01 /= 0
+  (htlcMax, rest) <- if htlcMaxPresent
     then do
       (m, r) <- decodeU64 bs10
       Right (Just (HtlcMaximumMsat m), r)
@@ -407,12 +429,12 @@ decodeChannelUpdate bs = do
         , chanUpdateChainHash       = chainH
         , chanUpdateShortChanId     = scid
         , chanUpdateTimestamp       = timestamp
-        , chanUpdateMsgFlags        = msgFlags'
         , chanUpdateChanFlags       = chanFlags'
         , chanUpdateCltvExpDelta    = CltvExpiryDelta cltvDelta
         , chanUpdateHtlcMinMsat     = HtlcMinimumMsat htlcMin
         , chanUpdateFeeBaseMsat     = FeeBaseMsat feeBase
-        , chanUpdateFeeProportional = FeeProportionalMillionths feeProp
+        , chanUpdateFeeProportional =
+            FeeProportionalMillionths feeProp
         , chanUpdateHtlcMaxMsat     = htlcMax
         }
   Right (msg, rest)
@@ -501,14 +523,17 @@ decodeReplyShortChannelIdsEnd bs = do
 encodeQueryChannelRange :: QueryChannelRange -> ByteString
 encodeQueryChannelRange msg = mconcat
   [ unChainHash (queryRangeChainHash msg)
-  , Prim.encodeU32 (queryRangeFirstBlock msg)
-  , Prim.encodeU32 (queryRangeNumBlocks msg)
+  , Prim.encodeU32
+      (getBlockHeight (queryRangeFirstBlock msg))
+  , Prim.encodeU32
+      (getBlockCount (queryRangeNumBlocks msg))
   , TLV.encodeTlvStream (queryRangeTlvs msg)
   ]
 
 -- | Decode query_channel_range message.
 decodeQueryChannelRange :: ByteString
-                        -> Either DecodeError (QueryChannelRange, ByteString)
+                        -> Either DecodeError
+                             (QueryChannelRange, ByteString)
 decodeQueryChannelRange bs = do
   (chainH, bs1)     <- decodeChainHash bs
   (firstBlock, bs2) <- decodeU32 bs1
@@ -518,22 +543,25 @@ decodeQueryChannelRange bs = do
         Right t -> t
   let msg = QueryChannelRange
         { queryRangeChainHash  = chainH
-        , queryRangeFirstBlock = firstBlock
-        , queryRangeNumBlocks  = numBlocks
+        , queryRangeFirstBlock = BlockHeight firstBlock
+        , queryRangeNumBlocks  = BlockCount numBlocks
         , queryRangeTlvs       = tlvs
         }
   Right (msg, BS.empty)
 
 -- | Encode reply_channel_range message.
-encodeReplyChannelRange :: ReplyChannelRange -> Either EncodeError ByteString
+encodeReplyChannelRange :: ReplyChannelRange
+                        -> Either EncodeError ByteString
 encodeReplyChannelRange msg = do
   let rangeData = replyRangeData msg
   if BS.length rangeData > 65535
     then Left EncodeLengthOverflow
     else Right $ mconcat
       [ unChainHash (replyRangeChainHash msg)
-      , Prim.encodeU32 (replyRangeFirstBlock msg)
-      , Prim.encodeU32 (replyRangeNumBlocks msg)
+      , Prim.encodeU32
+          (getBlockHeight (replyRangeFirstBlock msg))
+      , Prim.encodeU32
+          (getBlockCount (replyRangeNumBlocks msg))
       , BS.singleton (replyRangeSyncComplete msg)
       , encodeLenPrefixed rangeData
       , TLV.encodeTlvStream (replyRangeTlvs msg)
@@ -541,7 +569,8 @@ encodeReplyChannelRange msg = do
 
 -- | Decode reply_channel_range message.
 decodeReplyChannelRange :: ByteString
-                        -> Either DecodeError (ReplyChannelRange, ByteString)
+                        -> Either DecodeError
+                             (ReplyChannelRange, ByteString)
 decodeReplyChannelRange bs = do
   (chainH, bs1)       <- decodeChainHash bs
   (firstBlock, bs2)   <- decodeU32 bs1
@@ -553,8 +582,8 @@ decodeReplyChannelRange bs = do
         Right t -> t
   let msg = ReplyChannelRange
         { replyRangeChainHash    = chainH
-        , replyRangeFirstBlock   = firstBlock
-        , replyRangeNumBlocks    = numBlocks
+        , replyRangeFirstBlock   = BlockHeight firstBlock
+        , replyRangeNumBlocks    = BlockCount numBlocks
         , replyRangeSyncComplete = syncComplete
         , replyRangeData         = rangeData
         , replyRangeTlvs         = tlvs

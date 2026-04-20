@@ -165,8 +165,7 @@ mkChannelUpdate !sig !ch !scid = ChannelUpdate
   , chanUpdateChainHash       = ch
   , chanUpdateShortChanId     = scid
   , chanUpdateTimestamp       = 1234567890
-  , chanUpdateMsgFlags        = MessageFlags True
-  , chanUpdateChanFlags       = ChannelFlags False False
+  , chanUpdateChanFlags       = ChannelFlags NodeOne Enabled
   , chanUpdateCltvExpDelta    = CltvExpiryDelta 144
   , chanUpdateHtlcMinMsat     = HtlcMinimumMsat 1000
   , chanUpdateFeeBaseMsat     = FeeBaseMsat 1000
@@ -196,8 +195,8 @@ mkGossipTimestampFilter !ch = GossipTimestampFilter
 mkQueryChannelRange :: ChainHash -> TlvStream -> QueryChannelRange
 mkQueryChannelRange !ch !tlvs = QueryChannelRange
   { queryRangeChainHash  = ch
-  , queryRangeFirstBlock = 700000
-  , queryRangeNumBlocks  = 10000
+  , queryRangeFirstBlock = BlockHeight 700000
+  , queryRangeNumBlocks  = BlockCount 10000
   , queryRangeTlvs       = tlvs
   }
 
@@ -205,8 +204,8 @@ mkQueryChannelRange !ch !tlvs = QueryChannelRange
 mkReplyChannelRange :: ChainHash -> TlvStream -> ReplyChannelRange
 mkReplyChannelRange !ch !tlvs = ReplyChannelRange
   { replyRangeChainHash    = ch
-  , replyRangeFirstBlock   = 700000
-  , replyRangeNumBlocks    = 10000
+  , replyRangeFirstBlock   = BlockHeight 700000
+  , replyRangeNumBlocks    = BlockCount 10000
   , replyRangeSyncComplete = 1
   , replyRangeData         = encodeShortChannelIdList [testShortChannelId]
   , replyRangeTlvs         = tlvs

@@ -79,12 +79,13 @@ validateNodeAnnouncement msg = do
 --
 -- Checks:
 --
--- * htlc_minimum_msat <= htlc_maximum_msat (if htlc_maximum_msat present)
+-- * htlc_minimum_msat <= htlc_maximum_msat (if present)
 --
--- Note: The spec says message_flags bit 0 MUST be set if htlc_maximum_msat
--- is advertised. We don't enforce this at validation time since the codec
--- already handles the conditional field based on the flag.
-validateChannelUpdate :: ChannelUpdate -> Either ValidationError ()
+-- Note: message_flags consistency is enforced at the type
+-- level -- the flag is derived from the presence of
+-- 'chanUpdateHtlcMaxMsat'.
+validateChannelUpdate :: ChannelUpdate
+                      -> Either ValidationError ()
 validateChannelUpdate msg = do
   case chanUpdateHtlcMaxMsat msg of
     Nothing -> Right ()
@@ -99,10 +100,15 @@ validateChannelUpdate msg = do
 -- Checks:
 --
 -- * first_blocknum + number_of_blocks does not overflow
-validateQueryChannelRange :: QueryChannelRange -> Either ValidationError ()
+validateQueryChannelRange :: QueryChannelRange
+                          -> Either ValidationError ()
 validateQueryChannelRange msg = do
-  let first = fromIntegral (queryRangeFirstBlock msg) :: Word64
-      num   = fromIntegral (queryRangeNumBlocks msg) :: Word64
+  let first = fromIntegral
+        (getBlockHeight (queryRangeFirstBlock msg))
+        :: Word64
+      num = fromIntegral
+        (getBlockCount (queryRangeNumBlocks msg))
+        :: Word64
   if first + num > fromIntegral (maxBound :: Word32)
     then Left ValidateBlockOverflow
     else Right ()

@@ -41,7 +41,7 @@ module Lightning.Protocol.BOLT7.Messages (
 
 import Control.DeepSeq (NFData)
 import Data.ByteString (ByteString)
-import Data.Word (Word8, Word16, Word32)  -- Word8 still used by other messages
+import Data.Word (Word8, Word16, Word32)
 import GHC.Generics (Generic)
 import Lightning.Protocol.BOLT1 (TlvStream)
 import Lightning.Protocol.BOLT7.Types
@@ -121,18 +121,32 @@ instance NFData NodeAnnouncement
 -- | channel_update message (type 258).
 --
 -- Communicates per-direction routing parameters.
+--
+-- The message_flags field is derived automatically during
+-- encoding: bit 0 is set when 'chanUpdateHtlcMaxMsat' is
+-- 'Just'.
 data ChannelUpdate = ChannelUpdate
-  { chanUpdateSignature      :: !Signature       -- ^ Signature of message
-  , chanUpdateChainHash      :: !ChainHash       -- ^ Chain identifier
-  , chanUpdateShortChanId    :: !ShortChannelId  -- ^ Short channel ID
-  , chanUpdateTimestamp      :: !Timestamp       -- ^ Unix timestamp
-  , chanUpdateMsgFlags       :: !MessageFlags    -- ^ Message flags
-  , chanUpdateChanFlags      :: !ChannelFlags    -- ^ Channel flags
-  , chanUpdateCltvExpDelta   :: !CltvExpiryDelta -- ^ CLTV expiry delta
-  , chanUpdateHtlcMinMsat    :: !HtlcMinimumMsat -- ^ Minimum HTLC msat
-  , chanUpdateFeeBaseMsat    :: !FeeBaseMsat     -- ^ Base fee msat
-  , chanUpdateFeeProportional :: !FeeProportionalMillionths -- ^ Prop fee
-  , chanUpdateHtlcMaxMsat    :: !(Maybe HtlcMaximumMsat) -- ^ Max HTLC (optional)
+  { chanUpdateSignature       :: !Signature
+    -- ^ Signature of message
+  , chanUpdateChainHash       :: !ChainHash
+    -- ^ Chain identifier
+  , chanUpdateShortChanId     :: !ShortChannelId
+    -- ^ Short channel ID
+  , chanUpdateTimestamp       :: !Timestamp
+    -- ^ Unix timestamp
+  , chanUpdateChanFlags       :: !ChannelFlags
+    -- ^ Channel flags
+  , chanUpdateCltvExpDelta    :: !CltvExpiryDelta
+    -- ^ CLTV expiry delta
+  , chanUpdateHtlcMinMsat     :: !HtlcMinimumMsat
+    -- ^ Minimum HTLC msat
+  , chanUpdateFeeBaseMsat     :: !FeeBaseMsat
+    -- ^ Base fee msat
+  , chanUpdateFeeProportional :: !FeeProportionalMillionths
+    -- ^ Proportional fee
+  , chanUpdateHtlcMaxMsat     :: !(Maybe HtlcMaximumMsat)
+    -- ^ Max HTLC (optional; presence sets message_flags
+    -- bit 0)
   }
   deriving (Eq, Show, Generic)
 
@@ -182,10 +196,10 @@ instance NFData ReplyShortChannelIdsEnd
 --
 -- Queries channels within a block range.
 data QueryChannelRange = QueryChannelRange
-  { queryRangeChainHash     :: !ChainHash  -- ^ Chain identifier
-  , queryRangeFirstBlock    :: !Word32     -- ^ First block number
-  , queryRangeNumBlocks     :: !Word32     -- ^ Number of blocks
-  , queryRangeTlvs          :: !TlvStream  -- ^ Optional TLV (query_option)
+  { queryRangeChainHash  :: !ChainHash    -- ^ Chain identifier
+  , queryRangeFirstBlock :: !BlockHeight  -- ^ First block number
+  , queryRangeNumBlocks  :: !BlockCount   -- ^ Number of blocks
+  , queryRangeTlvs       :: !TlvStream    -- ^ Optional TLV
   }
   deriving (Eq, Show, Generic)
 
@@ -195,12 +209,12 @@ instance NFData QueryChannelRange
 --
 -- Responds to query_channel_range with channel IDs.
 data ReplyChannelRange = ReplyChannelRange
-  { replyRangeChainHash   :: !ChainHash    -- ^ Chain identifier
-  , replyRangeFirstBlock  :: !Word32       -- ^ First block number
-  , replyRangeNumBlocks   :: !Word32       -- ^ Number of blocks
-  , replyRangeSyncComplete :: !Word8       -- ^ 1 if sync complete
-  , replyRangeData        :: !ByteString   -- ^ Encoded short_channel_ids
-  , replyRangeTlvs        :: !TlvStream    -- ^ Optional TLVs
+  { replyRangeChainHash    :: !ChainHash    -- ^ Chain identifier
+  , replyRangeFirstBlock   :: !BlockHeight  -- ^ First block
+  , replyRangeNumBlocks    :: !BlockCount   -- ^ Block count
+  , replyRangeSyncComplete :: !Word8        -- ^ 1 if complete
+  , replyRangeData         :: !ByteString   -- ^ Encoded SCIDs
+  , replyRangeTlvs         :: !TlvStream    -- ^ Optional TLVs
   }
   deriving (Eq, Show, Generic)
 

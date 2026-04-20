@@ -173,8 +173,7 @@ testChannelUpdate = ChannelUpdate
   , chanUpdateChainHash       = testChainHash
   , chanUpdateShortChanId     = testShortChannelId
   , chanUpdateTimestamp       = 1234567890
-  , chanUpdateMsgFlags        = MessageFlags True
-  , chanUpdateChanFlags       = ChannelFlags False False
+  , chanUpdateChanFlags       = ChannelFlags NodeOne Enabled
   , chanUpdateCltvExpDelta    = CltvExpiryDelta 144
   , chanUpdateHtlcMinMsat     = HtlcMinimumMsat 1000
   , chanUpdateFeeBaseMsat     = FeeBaseMsat 1000
@@ -239,8 +238,8 @@ encodedReplyShortChannelIdsEnd =
 testQueryChannelRange :: QueryChannelRange
 testQueryChannelRange = QueryChannelRange
   { queryRangeChainHash  = testChainHash
-  , queryRangeFirstBlock = 700000
-  , queryRangeNumBlocks  = 10000
+  , queryRangeFirstBlock = BlockHeight 700000
+  , queryRangeNumBlocks  = BlockCount 10000
   , queryRangeTlvs       = emptyTlvs
   }
 {-# NOINLINE testQueryChannelRange #-}
@@ -254,8 +253,8 @@ encodedQueryChannelRange = encodeQueryChannelRange testQueryChannelRange
 testReplyChannelRange :: ReplyChannelRange
 testReplyChannelRange = ReplyChannelRange
   { replyRangeChainHash    = testChainHash
-  , replyRangeFirstBlock   = 700000
-  , replyRangeNumBlocks    = 10000
+  , replyRangeFirstBlock   = BlockHeight 700000
+  , replyRangeNumBlocks    = BlockCount 10000
   , replyRangeSyncComplete = 1
   , replyRangeData         = encodeShortChannelIdList [testShortChannelId]
   , replyRangeTlvs         = emptyTlvs
