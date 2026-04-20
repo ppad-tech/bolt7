@@ -64,11 +64,13 @@ module Lightning.Protocol.BOLT7.Types (
   , TorV3Addr
   , torV3Addr
   , getTorV3Addr
+  , Hostname
+  , hostname
+  , getHostname
 
   -- * Channel update flags
-  , MessageFlags(..)
-  , encodeMessageFlags
-  , decodeMessageFlags
+  , Direction(..)
+  , ChannelStatus(..)
   , ChannelFlags(..)
   , encodeChannelFlags
   , decodeChannelFlags
@@ -79,6 +81,10 @@ module Lightning.Protocol.BOLT7.Types (
   , FeeProportionalMillionths(..)
   , HtlcMinimumMsat(..)
   , HtlcMaximumMsat(..)
+
+  -- * Block range types
+  , BlockHeight(..)
+  , BlockCount(..)
 
   -- * Constants
   , chainHashLen
@@ -318,45 +324,68 @@ torV3Addr !bs
   | otherwise = Nothing
 {-# INLINE torV3Addr #-}
 
+-- | DNS hostname (1-255 bytes).
+--
+-- Per BOLT #7 address descriptor type 5, the hostname is
+-- a length-prefixed DNS name. The length byte limits it to
+-- 255 bytes.
+newtype Hostname = Hostname { getHostname :: ByteString }
+  deriving (Eq, Show, Generic)
+
+instance NFData Hostname
+
+-- | Smart constructor for Hostname.
+--
+-- Returns Nothing if the hostname is empty or exceeds
+-- 255 bytes.
+hostname :: ByteString -> Maybe Hostname
+hostname !bs
+  | BS.null bs = Nothing
+  | BS.length bs > 255 = Nothing
+  | otherwise = Just (Hostname bs)
+{-# INLINE hostname #-}
+
 -- | Network address with port.
 data Address
-  = AddrIPv4 !IPv4Addr !Word16    -- ^ IPv4 address + port
-  | AddrIPv6 !IPv6Addr !Word16    -- ^ IPv6 address + port
+  = AddrIPv4  !IPv4Addr  !Word16  -- ^ IPv4 address + port
+  | AddrIPv6  !IPv6Addr  !Word16  -- ^ IPv6 address + port
   | AddrTorV3 !TorV3Addr !Word16  -- ^ Tor v3 address + port
-  | AddrDNS !ByteString !Word16   -- ^ DNS hostname + port
+  | AddrDNS   !Hostname  !Word16  -- ^ DNS hostname + port
   deriving (Eq, Show, Generic)
 
 instance NFData Address
 
 -- Channel update flags --------------------------------------------------------
 
--- | Message flags for channel_update.
+-- | Direction of a channel_update.
 --
--- Bit 0: htlc_maximum_msat field is present.
-data MessageFlags = MessageFlags
-  { mfHtlcMaxPresent :: !Bool  -- ^ htlc_maximum_msat is present
-  }
-  deriving (Eq, Show, Generic)
+-- Per BOLT #7, bit 0 of channel_flags indicates which node
+-- is the origin of the update.
+data Direction
+  = NodeOne  -- ^ Update from node_id_1 (bit 0 = 0)
+  | NodeTwo  -- ^ Update from node_id_2 (bit 0 = 1)
+  deriving (Eq, Ord, Show, Generic)
 
-instance NFData MessageFlags
+instance NFData Direction
 
--- | Encode MessageFlags to Word8.
-encodeMessageFlags :: MessageFlags -> Word8
-encodeMessageFlags mf = if mfHtlcMaxPresent mf then 0x01 else 0x00
-{-# INLINE encodeMessageFlags #-}
+-- | Channel enabled\/disabled status.
+--
+-- Per BOLT #7, bit 1 of channel_flags indicates whether
+-- the channel is disabled.
+data ChannelStatus
+  = Enabled   -- ^ Channel is active (bit 1 = 0)
+  | Disabled  -- ^ Channel is disabled (bit 1 = 1)
+  deriving (Eq, Ord, Show, Generic)
 
--- | Decode Word8 to MessageFlags.
-decodeMessageFlags :: Word8 -> MessageFlags
-decodeMessageFlags w = MessageFlags { mfHtlcMaxPresent = w .&. 0x01 /= 0 }
-{-# INLINE decodeMessageFlags #-}
+instance NFData ChannelStatus
 
 -- | Channel flags for channel_update.
 --
--- Bit 0: direction (0 = node_id_1 is origin, 1 = node_id_2 is origin).
--- Bit 1: disabled (1 = channel disabled).
+-- Bit 0: direction (0 = node_id_1, 1 = node_id_2).
+-- Bit 1: disabled (0 = enabled, 1 = disabled).
 data ChannelFlags = ChannelFlags
-  { cfDirection :: !Bool  -- ^ True = node_id_2 is origin
-  , cfDisabled  :: !Bool  -- ^ True = channel is disabled
+  { cfDirection :: !Direction      -- ^ Update origin
+  , cfStatus    :: !ChannelStatus  -- ^ Channel status
   }
   deriving (Eq, Show, Generic)
 
@@ -365,15 +394,25 @@ instance NFData ChannelFlags
 -- | Encode ChannelFlags to Word8.
 encodeChannelFlags :: ChannelFlags -> Word8
 encodeChannelFlags cf =
-  (if cfDirection cf then 0x01 else 0x00) .|.
-  (if cfDisabled cf then 0x02 else 0x00)
+  dir .|. sta
+  where
+    dir = case cfDirection cf of
+      NodeOne -> 0x00
+      NodeTwo -> 0x01
+    sta = case cfStatus cf of
+      Enabled  -> 0x00
+      Disabled -> 0x02
 {-# INLINE encodeChannelFlags #-}
 
 -- | Decode Word8 to ChannelFlags.
 decodeChannelFlags :: Word8 -> ChannelFlags
 decodeChannelFlags w = ChannelFlags
-  { cfDirection = w .&. 0x01 /= 0
-  , cfDisabled  = w .&. 0x02 /= 0
+  { cfDirection = if w .&. 0x01 /= 0
+      then NodeTwo
+      else NodeOne
+  , cfStatus = if w .&. 0x02 /= 0
+      then Disabled
+      else Enabled
   }
 {-# INLINE decodeChannelFlags #-}
 
@@ -405,7 +444,30 @@ newtype HtlcMinimumMsat = HtlcMinimumMsat { getHtlcMinimumMsat :: Word64 }
 instance NFData HtlcMinimumMsat
 
 -- | Maximum HTLC value in millisatoshis.
-newtype HtlcMaximumMsat = HtlcMaximumMsat { getHtlcMaximumMsat :: Word64 }
+newtype HtlcMaximumMsat = HtlcMaximumMsat
+  { getHtlcMaximumMsat :: Word64 }
   deriving (Eq, Ord, Show, Generic)
 
 instance NFData HtlcMaximumMsat
+
+-- Block range types -----------------------------------------------------------
+
+-- | Absolute block height.
+--
+-- Used in query_channel_range and reply_channel_range for
+-- the first_blocknum field.
+newtype BlockHeight = BlockHeight
+  { getBlockHeight :: Word32 }
+  deriving (Eq, Ord, Show, Generic)
+
+instance NFData BlockHeight
+
+-- | Block count (relative duration).
+--
+-- Used in query_channel_range and reply_channel_range for
+-- the number_of_blocks field.
+newtype BlockCount = BlockCount
+  { getBlockCount :: Word32 }
+  deriving (Eq, Ord, Show, Generic)
+
+instance NFData BlockCount

@@ -207,9 +207,8 @@ channel_update_tests = testGroup "ChannelUpdate" [
             , chanUpdateChainHash      = testChainHash
             , chanUpdateShortChanId    = testShortChannelId
             , chanUpdateTimestamp      = 1234567890
-            , chanUpdateMsgFlags       = MessageFlags { mfHtlcMaxPresent = False }
             , chanUpdateChanFlags      = ChannelFlags
-                { cfDirection = True, cfDisabled = False }
+                { cfDirection = NodeTwo, cfStatus = Enabled }
             , chanUpdateCltvExpDelta   = CltvExpiryDelta 144
             , chanUpdateHtlcMinMsat    = HtlcMinimumMsat 1000
             , chanUpdateFeeBaseMsat    = FeeBaseMsat 1000
@@ -226,9 +225,8 @@ channel_update_tests = testGroup "ChannelUpdate" [
             , chanUpdateChainHash      = testChainHash
             , chanUpdateShortChanId    = testShortChannelId
             , chanUpdateTimestamp      = 1234567890
-            , chanUpdateMsgFlags       = MessageFlags { mfHtlcMaxPresent = True }
             , chanUpdateChanFlags      = ChannelFlags
-                { cfDirection = False, cfDisabled = False }
+                { cfDirection = NodeOne, cfStatus = Enabled }
             , chanUpdateCltvExpDelta   = CltvExpiryDelta 40
             , chanUpdateHtlcMinMsat    = HtlcMinimumMsat 1000
             , chanUpdateFeeBaseMsat    = FeeBaseMsat 500
@@ -292,8 +290,8 @@ query_tests = testGroup "Query Messages" [
       testCase "encode/decode roundtrip" $ do
         let msg = QueryChannelRange
               { queryRangeChainHash  = testChainHash
-              , queryRangeFirstBlock = 600000
-              , queryRangeNumBlocks  = 10000
+              , queryRangeFirstBlock = BlockHeight 600000
+              , queryRangeNumBlocks  = BlockCount 10000
               , queryRangeTlvs       = emptyTlvs
               }
             encoded = encodeQueryChannelRange msg
@@ -308,8 +306,8 @@ query_tests = testGroup "Query Messages" [
       testCase "encode/decode roundtrip" $ do
         let msg = ReplyChannelRange
               { replyRangeChainHash    = testChainHash
-              , replyRangeFirstBlock   = 600000
-              , replyRangeNumBlocks    = 10000
+              , replyRangeFirstBlock   = BlockHeight 600000
+              , replyRangeNumBlocks    = BlockCount 10000
               , replyRangeSyncComplete = 1
               , replyRangeData         = BS.replicate 16 0xcd
               , replyRangeTlvs         = emptyTlvs
@@ -427,9 +425,9 @@ hash_tests = testGroup "Hash Functions" [
               , chanUpdateChainHash       = testChainHash
               , chanUpdateShortChanId     = testShortChannelId
               , chanUpdateTimestamp       = 1234567890
-              , chanUpdateMsgFlags        = MessageFlags { mfHtlcMaxPresent = False }
               , chanUpdateChanFlags       = ChannelFlags
-                  { cfDirection = False, cfDisabled = False }
+                  { cfDirection = NodeOne
+                  , cfStatus = Enabled }
               , chanUpdateCltvExpDelta    = CltvExpiryDelta 144
               , chanUpdateHtlcMinMsat     = HtlcMinimumMsat 1000
               , chanUpdateFeeBaseMsat     = FeeBaseMsat 1000
@@ -447,9 +445,9 @@ hash_tests = testGroup "Hash Functions" [
               , chanUpdateChainHash       = testChainHash
               , chanUpdateShortChanId     = testShortChannelId
               , chanUpdateTimestamp       = 1234567890
-              , chanUpdateMsgFlags        = MessageFlags { mfHtlcMaxPresent = False }
               , chanUpdateChanFlags       = ChannelFlags
-                  { cfDirection = False, cfDisabled = False }
+                  { cfDirection = NodeOne
+                  , cfStatus = Enabled }
               , chanUpdateCltvExpDelta    = CltvExpiryDelta 144
               , chanUpdateHtlcMinMsat     = HtlcMinimumMsat 1000
               , chanUpdateFeeBaseMsat     = FeeBaseMsat 1000
@@ -466,9 +464,9 @@ hash_tests = testGroup "Hash Functions" [
               , chanUpdateChainHash       = testChainHash
               , chanUpdateShortChanId     = testShortChannelId
               , chanUpdateTimestamp       = 1000000000
-              , chanUpdateMsgFlags        = MessageFlags { mfHtlcMaxPresent = False }
               , chanUpdateChanFlags       = ChannelFlags
-                  { cfDirection = False, cfDisabled = False }
+                  { cfDirection = NodeOne
+                  , cfStatus = Enabled }
               , chanUpdateCltvExpDelta    = CltvExpiryDelta 144
               , chanUpdateHtlcMinMsat     = HtlcMinimumMsat 1000
               , chanUpdateFeeBaseMsat     = FeeBaseMsat 1000
@@ -480,9 +478,9 @@ hash_tests = testGroup "Hash Functions" [
               , chanUpdateChainHash       = testChainHash
               , chanUpdateShortChanId     = testShortChannelId
               , chanUpdateTimestamp       = 2000000000
-              , chanUpdateMsgFlags        = MessageFlags { mfHtlcMaxPresent = False }
               , chanUpdateChanFlags       = ChannelFlags
-                  { cfDirection = False, cfDisabled = False }
+                  { cfDirection = NodeOne
+                  , cfStatus = Enabled }
               , chanUpdateCltvExpDelta    = CltvExpiryDelta 144
               , chanUpdateHtlcMinMsat     = HtlcMinimumMsat 1000
               , chanUpdateFeeBaseMsat     = FeeBaseMsat 1000
@@ -536,9 +534,9 @@ validation_tests = testGroup "Validation" [
               , chanUpdateChainHash       = testChainHash
               , chanUpdateShortChanId     = testShortChannelId
               , chanUpdateTimestamp       = 1234567890
-              , chanUpdateMsgFlags        = MessageFlags { mfHtlcMaxPresent = True }
               , chanUpdateChanFlags       = ChannelFlags
-                  { cfDirection = False, cfDisabled = False }
+                  { cfDirection = NodeOne
+                  , cfStatus = Enabled }
               , chanUpdateCltvExpDelta    = CltvExpiryDelta 144
               , chanUpdateHtlcMinMsat     = HtlcMinimumMsat 1000
               , chanUpdateFeeBaseMsat     = FeeBaseMsat 1000
@@ -552,9 +550,9 @@ validation_tests = testGroup "Validation" [
               , chanUpdateChainHash       = testChainHash
               , chanUpdateShortChanId     = testShortChannelId
               , chanUpdateTimestamp       = 1234567890
-              , chanUpdateMsgFlags        = MessageFlags { mfHtlcMaxPresent = True }
               , chanUpdateChanFlags       = ChannelFlags
-                  { cfDirection = False, cfDisabled = False }
+                  { cfDirection = NodeOne
+                  , cfStatus = Enabled }
               , chanUpdateCltvExpDelta    = CltvExpiryDelta 144
               , chanUpdateHtlcMinMsat     = HtlcMinimumMsat 2000000000  -- > htlcMax
               , chanUpdateFeeBaseMsat     = FeeBaseMsat 1000
@@ -567,16 +565,16 @@ validation_tests = testGroup "Validation" [
       testCase "valid range passes" $ do
         let msg = QueryChannelRange
               { queryRangeChainHash  = testChainHash
-              , queryRangeFirstBlock = 600000
-              , queryRangeNumBlocks  = 10000
+              , queryRangeFirstBlock = BlockHeight 600000
+              , queryRangeNumBlocks  = BlockCount 10000
               , queryRangeTlvs       = emptyTlvs
               }
         validateQueryChannelRange msg @?= Right ()
     , testCase "rejects overflow" $ do
         let msg = QueryChannelRange
               { queryRangeChainHash  = testChainHash
-              , queryRangeFirstBlock = maxBound  -- 0xFFFFFFFF
-              , queryRangeNumBlocks  = 10
+              , queryRangeFirstBlock = BlockHeight maxBound
+              , queryRangeNumBlocks  = BlockCount 10
               , queryRangeTlvs       = emptyTlvs
               }
         validateQueryChannelRange msg @?= Left ValidateBlockOverflow
@@ -648,9 +646,9 @@ propChannelUpdateRoundtrip timestamp cltvDelta = property $ do
         , chanUpdateChainHash      = testChainHash
         , chanUpdateShortChanId    = testShortChannelId
         , chanUpdateTimestamp      = timestamp
-        , chanUpdateMsgFlags       = MessageFlags { mfHtlcMaxPresent = False }
         , chanUpdateChanFlags      = ChannelFlags
-            { cfDirection = False, cfDisabled = False }
+            { cfDirection = NodeOne
+            , cfStatus = Enabled }
         , chanUpdateCltvExpDelta   = CltvExpiryDelta cltvDelta
         , chanUpdateHtlcMinMsat    = HtlcMinimumMsat 1000
         , chanUpdateFeeBaseMsat    = FeeBaseMsat 1000
