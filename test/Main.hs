@@ -2,7 +2,9 @@
 
 module Main where
 
+import qualified Crypto.Curve.Secp256k1 as Secp256k1
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Base16 as B16
 import Data.Maybe (fromJust)
 import Data.Word (Word8, Word16, Word32)
 import Lightning.Protocol.BOLT1
@@ -25,6 +27,7 @@ main = defaultMain $ testGroup "ppad-bolt7" [
   , hash_tests
   , validation_tests
   , error_tests
+  , mainnet_tests
   , property_tests
   ]
 
@@ -918,6 +921,183 @@ error_tests = testGroup "Error Conditions" [
               }
         encodeReplyChannelRange msg @?= Left EncodeLengthOverflow
     ]
+  ]
+
+-- Mainnet Gossip Tests --------------------------------------------------------
+
+-- Real mainnet gossip for short_channel_id 850052x2992x1: its
+-- channel_announcement and one channel_update per direction. Payloads
+-- exclude the 2-byte message type. The digests and checksums were
+-- computed independently of this library.
+
+mainnet_tests :: TestTree
+mainnet_tests = testGroup "Mainnet gossip" [
+    testCase "fixtures decode from hex" $ do
+      BS.length mainnetChanAnn @?= 430
+      BS.length mainnetUpdate136 @?= 136
+      BS.length mainnetUpdate148 @?= 148
+  , testGroup "channel_announcement" [
+      testCase "decodes" $ do
+        (ann, rest) <- expectRight "decode"
+          (decodeChannelAnnouncement mainnetChanAnn)
+        rest @?= BS.empty
+        formatScid (channelAnnShortChanId ann) @?= "850052x2992x1"
+        channelAnnChainHash ann @?= mainnetChainHash
+        getFeatureBits (channelAnnFeatures ann) @?= BS.empty
+        getNodeId (channelAnnNodeId1 ann) @?= mainnetNodeId1
+        getNodeId (channelAnnNodeId2 ann) @?= mainnetNodeId2
+        validateChannelAnnouncement ann @?= Right ()
+    , testCase "re-encodes byte-exact" $ do
+        (ann, _) <- expectRight "decode"
+          (decodeChannelAnnouncement mainnetChanAnn)
+        encodeChannelAnnouncement ann @?= Right mainnetChanAnn
+    , testCase "signature hash" $
+        channelAnnouncementHash mainnetChanAnn @?= Just (hex
+          "3dc0e5a431551c44f2afd49cda2d3bf2a5f1b9cc86ef93db8953c17dd1ef4ded")
+    , testCase "all four signatures verify" $ do
+        (ann, _) <- expectRight "decode"
+          (decodeChannelAnnouncement mainnetChanAnn)
+        h <- expectJust "hash" (channelAnnouncementHash mainnetChanAnn)
+        let nid = getNodeId
+            btc = unPoint
+        assertBool "node_sig_1" $
+          verifySig h (nid (channelAnnNodeId1 ann)) (channelAnnNodeSig1 ann)
+        assertBool "node_sig_2" $
+          verifySig h (nid (channelAnnNodeId2 ann)) (channelAnnNodeSig2 ann)
+        assertBool "bitcoin_sig_1" $
+          verifySig h (btc (channelAnnBitcoinKey1 ann))
+            (channelAnnBitcoinSig1 ann)
+        assertBool "bitcoin_sig_2" $
+          verifySig h (btc (channelAnnBitcoinKey2 ann))
+            (channelAnnBitcoinSig2 ann)
+        assertBool "node_sig_1 does not verify under node_id_2" $
+          not (verifySig h (nid (channelAnnNodeId2 ann))
+                 (channelAnnNodeSig1 ann))
+    ]
+  , testGroup "channel_update (136 bytes)" [
+      testCase "decodes" $ do
+        (upd, rest) <- expectRight "decode"
+          (decodeChannelUpdate mainnetUpdate136)
+        rest @?= BS.empty
+        formatScid (chanUpdateShortChanId upd) @?= "850052x2992x1"
+        chanUpdateChainHash upd @?= mainnetChainHash
+        chanUpdateTimestamp upd @?= 1776493010
+        chanUpdateChanFlags upd @?= ChannelFlags NodeTwo Disabled
+        chanUpdateCltvExpDelta upd @?= CltvExpiryDelta 80
+        chanUpdateHtlcMinMsat upd @?= HtlcMinimumMsat 1000
+        chanUpdateFeeBaseMsat upd @?= FeeBaseMsat 1000
+        chanUpdateFeeProportional upd @?= FeeProportionalMillionths 800
+        chanUpdateHtlcMaxMsat upd @?= HtlcMaximumMsat 2970000000
+        validateChannelUpdate upd @?= Right ()
+    , testCase "re-encodes byte-exact" $ do
+        (upd, _) <- expectRight "decode"
+          (decodeChannelUpdate mainnetUpdate136)
+        encodeChannelUpdate upd @?= mainnetUpdate136
+    , testCase "signature hash" $
+        channelUpdateHash mainnetUpdate136 @?= Just (hex
+          "5c9960b6fef9fa0d53073895420159e856c7c5f33fdeb694b163a832efe6b8e3")
+    , testCase "signature verifies under node_id_2" $ do
+        (upd, _) <- expectRight "decode"
+          (decodeChannelUpdate mainnetUpdate136)
+        h <- expectJust "hash" (channelUpdateHash mainnetUpdate136)
+        let sig = chanUpdateSignature upd
+        assertBool "node_id_2" (verifySig h mainnetNodeId2 sig)
+        assertBool "not node_id_1" (not (verifySig h mainnetNodeId1 sig))
+    , testCase "checksum" $
+        channelUpdateChecksum mainnetUpdate136 @?= Just 0x1da953bd
+    ]
+  , testGroup "channel_update (148 bytes, with extension)" [
+      testCase "decodes, leaving the extension as rest" $ do
+        (upd, rest) <- expectRight "decode"
+          (decodeChannelUpdate mainnetUpdate148)
+        -- an LND inbound-fee TLV (type 55555) after htlc_maximum_msat
+        rest @?= hex "fdd9030800000000ffffffed"
+        chanUpdateTimestamp upd @?= 1779047542
+        chanUpdateChanFlags upd @?= ChannelFlags NodeOne Enabled
+        chanUpdateCltvExpDelta upd @?= CltvExpiryDelta 100
+        chanUpdateHtlcMinMsat upd @?= HtlcMinimumMsat 1000
+        chanUpdateFeeBaseMsat upd @?= FeeBaseMsat 0
+        chanUpdateFeeProportional upd @?= FeeProportionalMillionths 5000
+        chanUpdateHtlcMaxMsat upd @?= HtlcMaximumMsat 2970000000
+    , testCase "re-encodes the fixed fields byte-exact" $ do
+        -- the record does not keep extension bytes
+        (upd, rest) <- expectRight "decode"
+          (decodeChannelUpdate mainnetUpdate148)
+        encodeChannelUpdate upd <> rest @?= mainnetUpdate148
+    , testCase "signature hash covers the extension" $
+        channelUpdateHash mainnetUpdate148 @?= Just (hex
+          "b1989933c26561ab2cdcc49b471aee5f6e0403a5eb7b88a908cb19cfee0556b9")
+    , testCase "signature verifies under node_id_1" $ do
+        (upd, _) <- expectRight "decode"
+          (decodeChannelUpdate mainnetUpdate148)
+        h <- expectJust "hash" (channelUpdateHash mainnetUpdate148)
+        let sig = chanUpdateSignature upd
+        assertBool "node_id_1" (verifySig h mainnetNodeId1 sig)
+        assertBool "not node_id_2" (not (verifySig h mainnetNodeId2 sig))
+    , testCase "checksum includes the extension" $
+        channelUpdateChecksum mainnetUpdate148 @?= Just 0xf0a89fda
+    ]
+  ]
+
+-- | Unwrap an Either, failing the test on Left.
+expectRight :: Show e => String -> Either e a -> IO a
+expectRight what =
+  either (\e -> assertFailure (what ++ " failed: " ++ show e)) pure
+
+-- | Decode hex (empty on malformed input; the fixture length test
+-- catches that).
+hex :: BS.ByteString -> BS.ByteString
+hex = maybe BS.empty id . B16.decode
+
+-- | Verify a compact ECDSA signature over a digest.
+verifySig :: BS.ByteString -> BS.ByteString -> Signature -> Bool
+verifySig digest pub sig =
+  case (Secp256k1.parse_point pub, Secp256k1.parse_sig (unSignature sig)) of
+    (Just p, Just s) -> Secp256k1._verify_ecdsa_no_hash digest p s
+    _ -> False
+
+mainnetNodeId1, mainnetNodeId2 :: BS.ByteString
+mainnetNodeId1 = hex
+  "02bb5e47ee26aca1654ce092d9d06eac15d953210c737f2220e2d7e54c4f108677"
+mainnetNodeId2 = hex
+  "030b828fd1e42549fbc2f1d0960ec3663362c41777d3d87fe1b8e1d4bf063abcaa"
+
+mainnetChanAnn :: BS.ByteString
+mainnetChanAnn = hex $ mconcat
+  [ "3c256c270126d2c52ab5464fa959d627e9baec8c76bd2b81d34b47c4efb03290"
+  , "40126ea7a0f8d31420976dc28ff684dc63f62620fa10dbac4fe3d417ca5690c1"
+  , "b7fe1de61f5dd2b8368886d6c98f625c9110198e57c14fac93d4eff34e19ce5f"
+  , "5dc6fef4501e8105c8f9b82d6d0b348f5840864445b071ae7a741b5eb92d2ec0"
+  , "ab85681e4e1e85144bbbd8757c14cee92468d2c5ac84345cb28931b6fed5e339"
+  , "00ed9dd363db630f31248cfa933a3667cbf87bb78a48a442e81c652686355365"
+  , "ff33164c7588f0a753d50c4d52dd4a81c611fa47b4e950dfc9e3379a12ef7834"
+  , "781c0900b90f56a5a49893446d03c8d283c3c093e3c8c682ff6cb40d70d9eebc"
+  , "00006fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d619000000"
+  , "00000cf884000bb0000102bb5e47ee26aca1654ce092d9d06eac15d953210c73"
+  , "7f2220e2d7e54c4f108677030b828fd1e42549fbc2f1d0960ec3663362c41777"
+  , "d3d87fe1b8e1d4bf063abcaa02bc3f260955062a4f427704edef1864c76d6777"
+  , "fe81bed43a5f6297dda1c7ca9203523e164f4f9fbdea978c6570d56b13ca8338"
+  , "430e6794ff74cf6aa0dbda71dd2d"
+  ]
+
+-- | Direction 1, disabled.
+mainnetUpdate136 :: BS.ByteString
+mainnetUpdate136 = hex $ mconcat
+  [ "261e3d1f1b77b4a606c20dbe5b395e35703adc82fd9320b88e892f51547b93e9"
+  , "060f793d8cfd93d2063060a692c31749d0eb3dd351f3e4bbc562d00f89472a42"
+  , "6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000"
+  , "0cf884000bb0000169e321d20103005000000000000003e8000003e800000320"
+  , "00000000b1069a80"
+  ]
+
+-- | Direction 0, enabled, with a 12-byte extension.
+mainnetUpdate148 :: BS.ByteString
+mainnetUpdate148 = hex $ mconcat
+  [ "1c3f0859cb3f4494919c3dcc80d22bbf1e25e378bd95f071530833c2371c33d7"
+  , "0766012ebef1cd79b299a54d0d29bea2ef6feca1d6cfa188864c95d7eea7e9a4"
+  , "6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000"
+  , "0cf884000bb000016a0a1c760100006400000000000003e80000000000001388"
+  , "00000000b1069a80fdd9030800000000ffffffed"
   ]
 
 -- Property Tests --------------------------------------------------------------
