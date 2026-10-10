@@ -112,6 +112,22 @@ testNodeAnn addrs = NodeAnnouncement
   , nodeAnnAddresses = addrs
   }
 
+-- | A channel_announcement fixture with the given features.
+testChannelAnn :: FeatureBits -> ChannelAnnouncement
+testChannelAnn feats = ChannelAnnouncement
+  { channelAnnNodeSig1    = testSignature
+  , channelAnnNodeSig2    = testSignature
+  , channelAnnBitcoinSig1 = testSignature
+  , channelAnnBitcoinSig2 = testSignature
+  , channelAnnFeatures    = feats
+  , channelAnnChainHash   = testChainHash
+  , channelAnnShortChanId = testShortChannelId
+  , channelAnnNodeId1     = testNodeId2
+  , channelAnnNodeId2     = testNodeId
+  , channelAnnBitcoinKey1 = testPoint
+  , channelAnnBitcoinKey2 = testPoint
+  }
+
 -- | Replace the byte at an offset (no-op past the end).
 setByte :: Int -> Word8 -> BS.ByteString -> BS.ByteString
 setByte i w bs
@@ -797,6 +813,46 @@ error_tests = testGroup "Error Conditions" [
         case decodeGossipTimestampFilter (BS.replicate 30 0x00) of
           Left DecodeInsufficientBytes -> pure ()
           other -> assertFailure $ "expected insufficient: " ++ show other
+    ]
+  , testGroup "Length overflow" [
+      testCase "channel_announcement features" $ do
+        let feats n = featureBits (BS.replicate n 0x01)
+        encodeChannelAnnouncement (testChannelAnn (feats 65536))
+          @?= Left EncodeLengthOverflow
+        case encodeChannelAnnouncement (testChannelAnn (feats 65535)) of
+          Left e -> assertFailure $ "encode failed: " ++ show e
+          Right wire -> fmap fst (decodeChannelAnnouncement wire)
+            @?= Right (testChannelAnn (feats 65535))
+    , testCase "node_announcement features" $ do
+        let msg = (testNodeAnn [])
+              { nodeAnnFeatures = featureBits (BS.replicate 65536 0x01) }
+        encodeNodeAnnouncement msg @?= Left EncodeLengthOverflow
+    , testCase "node_announcement addresses" $ do
+        v4 <- addrV4
+        -- 10923 IPv4 descriptors take 65538 bytes
+        encodeNodeAnnouncement (testNodeAnn (replicate 10923 v4))
+          @?= Left EncodeLengthOverflow
+        case encodeNodeAnnouncement (testNodeAnn (replicate 9362 v4)) of
+          Left e -> assertFailure $ "encode failed: " ++ show e
+          Right wire -> fmap (length . nodeAnnAddresses . fst)
+            (decodeNodeAnnouncement wire) @?= Right 9362
+    , testCase "query_short_channel_ids encoded_short_ids" $ do
+        let msg = QueryShortChannelIds
+              { queryScidsChainHash = testChainHash
+              , queryScidsData      = BS.replicate 65536 0x00
+              , queryScidsTlvs      = emptyTlvs
+              }
+        encodeQueryShortChannelIds msg @?= Left EncodeLengthOverflow
+    , testCase "reply_channel_range encoded_short_ids" $ do
+        let msg = ReplyChannelRange
+              { replyRangeChainHash    = testChainHash
+              , replyRangeFirstBlock   = BlockHeight 600000
+              , replyRangeNumBlocks    = BlockCount 10000
+              , replyRangeSyncComplete = 1
+              , replyRangeData         = BS.replicate 65536 0x00
+              , replyRangeTlvs         = emptyTlvs
+              }
+        encodeReplyChannelRange msg @?= Left EncodeLengthOverflow
     ]
   ]
 
