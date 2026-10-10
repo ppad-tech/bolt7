@@ -51,26 +51,26 @@ double_sha256 :: BS.ByteString -> BS.ByteString
 double_sha256 = SHA256.hash . SHA256.hash
 {-# INLINE double_sha256 #-}
 
--- | The digest the four signatures of a 'ChannelAnnouncement' sign: the
+-- | The digest the four signatures of a t'ChannelAnnouncement' sign: the
 --   double SHA-256 of its encoding from offset 256 (after the
 --   signatures) to the end. Fails as 'encode_channel_announcement' does.
 channel_announcement_hash
   :: ChannelAnnouncement -> Either EncodeError BS.ByteString
 channel_announcement_hash = fmap double_sha256 . announcement_signed
 
--- | The digest the signature of a 'NodeAnnouncement' signs: the double
+-- | The digest the signature of a t'NodeAnnouncement' signs: the double
 --   SHA-256 of its encoding after the signature. Fails as
 --   'encode_node_announcement' does.
 node_announcement_hash
   :: NodeAnnouncement -> Either EncodeError BS.ByteString
 node_announcement_hash = fmap double_sha256 . node_signed
 
--- | The digest the signature of a 'ChannelUpdate' signs: the double
+-- | The digest the signature of a t'ChannelUpdate' signs: the double
 --   SHA-256 of its encoding after the signature.
 channel_update_hash :: ChannelUpdate -> BS.ByteString
 channel_update_hash = double_sha256 . update_signed
 
--- | Verify the four signatures of a 'ChannelAnnouncement': both node
+-- | Verify the four signatures of a t'ChannelAnnouncement': both node
 --   signatures and both bitcoin signatures, each over
 --   'channel_announcement_hash' under the corresponding key.
 --
@@ -86,7 +86,7 @@ verify_channel_announcement m = case announcement_signed m of
           && verify d (ca_bitcoin_key_1 m) (ca_bitcoin_signature_1 m)
           && verify d (ca_bitcoin_key_2 m) (ca_bitcoin_signature_2 m)
 
--- | Verify the signature of a 'NodeAnnouncement' under its node id.
+-- | Verify the signature of a t'NodeAnnouncement' under its node id.
 --
 --   As with libsecp256k1, the signature must be in low-s form.
 verify_node_announcement :: NodeAnnouncement -> Bool
@@ -94,9 +94,9 @@ verify_node_announcement m = case node_signed m of
   Left _       -> False
   Right signed -> verify (SHA256.hash signed) (na_node_id m) (na_signature m)
 
--- | Verify the signature of a 'ChannelUpdate' under the given node id.
+-- | Verify the signature of a t'ChannelUpdate' under the given node id.
 --
---   The key is that of the channel's 'ChannelAnnouncement' selected by
+--   The key is that of the channel's t'ChannelAnnouncement' selected by
 --   the update's direction: 'ca_node_id_1' for
 --   'Lightning.Protocol.BOLT7.NodeOne', 'ca_node_id_2' for
 --   'Lightning.Protocol.BOLT7.NodeTwo'. As with libsecp256k1, the
@@ -114,7 +114,7 @@ verify d k s =
     (Just p, Just sig) -> Secp256k1.verify_ecdsa' Secp256k1.precompute d p sig
     _                  -> False
 
--- | The checksum of a 'ChannelUpdate', as used in the @checksums_tlv@ of
+-- | The checksum of a t'ChannelUpdate', as used in the @checksums_tlv@ of
 --   @reply_channel_range@: the CRC-32C (RFC 3720) of the update without
 --   its signature and timestamp. Extension records are included.
 channel_update_checksum :: ChannelUpdate -> Word32

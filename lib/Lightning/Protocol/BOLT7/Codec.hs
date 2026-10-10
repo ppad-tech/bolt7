@@ -131,7 +131,7 @@ decode_message t bs = case t of
 
 -- channel_announcement -------------------------------------------------------
 
--- | Encode a 'ChannelAnnouncement' payload. Fails if the features exceed
+-- | Encode a t'ChannelAnnouncement' payload. Fails if the features exceed
 --   65535 bytes.
 encode_channel_announcement
   :: ChannelAnnouncement -> Either EncodeError BS.ByteString
@@ -152,7 +152,7 @@ encode_channel_announcement m = do
     , BOLT1.encode_tlv_stream (ca_tlvs m)
     ]
 
--- | Decode a 'ChannelAnnouncement' payload.
+-- | Decode a t'ChannelAnnouncement' payload.
 decode_channel_announcement
   :: BS.ByteString -> Either DecodeError ChannelAnnouncement
 decode_channel_announcement b0 = do
@@ -185,7 +185,7 @@ decode_channel_announcement b0 = do
 
 -- node_announcement ----------------------------------------------------------
 
--- | Encode a 'NodeAnnouncement' payload. Fails if the features or the
+-- | Encode a t'NodeAnnouncement' payload. Fails if the features or the
 --   addresses exceed 65535 bytes, or if 'na_unknown_addresses' begins
 --   with a descriptor of a known type.
 encode_node_announcement
@@ -219,7 +219,7 @@ encode_address a = case a of
   AddrDNS (Hostname h) p    ->
     BS.cons 5 (BS.cons (fromIntegral (BS.length h)) (h <> BOLT1.encode_u16 p))
 
--- | Decode a 'NodeAnnouncement' payload.
+-- | Decode a t'NodeAnnouncement' payload.
 --
 --   Address descriptors are parsed up to the first one of an unknown
 --   type; it and the bytes after it are kept in 'na_unknown_addresses'.
@@ -278,7 +278,7 @@ addresses = go []
 
 -- channel_update -------------------------------------------------------------
 
--- | Encode a 'ChannelUpdate' payload.
+-- | Encode a t'ChannelUpdate' payload.
 encode_channel_update :: ChannelUpdate -> BS.ByteString
 encode_channel_update m =
   let MessageFlags mf = cu_message_flags m
@@ -297,7 +297,7 @@ encode_channel_update m =
         , BOLT1.encode_tlv_stream (cu_tlvs m)
         ]
 
--- | Decode a 'ChannelUpdate' payload.
+-- | Decode a t'ChannelUpdate' payload.
 --
 --   @htlc_maximum_msat@ is always present; the @must_be_one@ bit of
 --   @message_flags@ is kept but not interpreted.
@@ -332,7 +332,7 @@ decode_channel_update b0 = do
 
 -- announcement_signatures ----------------------------------------------------
 
--- | Encode an 'AnnouncementSignatures' payload.
+-- | Encode an t'AnnouncementSignatures' payload.
 encode_announcement_signatures :: AnnouncementSignatures -> BS.ByteString
 encode_announcement_signatures m = mconcat
   [ BOLT1.un_channel_id (as_channel_id m)
@@ -342,7 +342,7 @@ encode_announcement_signatures m = mconcat
   , BOLT1.encode_tlv_stream (as_tlvs m)
   ]
 
--- | Decode an 'AnnouncementSignatures' payload.
+-- | Decode an t'AnnouncementSignatures' payload.
 decode_announcement_signatures
   :: BS.ByteString -> Either DecodeError AnnouncementSignatures
 decode_announcement_signatures b0 = do
@@ -355,7 +355,7 @@ decode_announcement_signatures b0 = do
 
 -- query_short_channel_ids ----------------------------------------------------
 
--- | Encode a 'QueryShortChannelIds' payload. Fails if the short channel
+-- | Encode a t'QueryShortChannelIds' payload. Fails if the short channel
 --   ids exceed the u16 length limit (8191 of them), if the query flags
 --   don't number one per short channel id, or if 'qsci_tlvs' holds a
 --   record of type 1.
@@ -374,7 +374,7 @@ encode_query_short_channel_ids m = do
   t <- merge [1] flags (qsci_tlvs m)
   pure (BOLT1.un_chain_hash (qsci_chain_hash m) <> ids <> t)
 
--- | Decode a 'QueryShortChannelIds' payload.
+-- | Decode a t'QueryShortChannelIds' payload.
 --
 --   Fails on an unknown encoding type (including the deprecated zlib
 --   encoding), on @encoded_short_ids@ that isn't a whole number of short
@@ -418,7 +418,7 @@ query_flags_value n v = case BS.uncons v of
 
 -- reply_short_channel_ids_end ------------------------------------------------
 
--- | Encode a 'ReplyShortChannelIdsEnd' payload.
+-- | Encode a t'ReplyShortChannelIdsEnd' payload.
 encode_reply_short_channel_ids_end
   :: ReplyShortChannelIdsEnd -> BS.ByteString
 encode_reply_short_channel_ids_end m = mconcat
@@ -427,7 +427,7 @@ encode_reply_short_channel_ids_end m = mconcat
   , BOLT1.encode_tlv_stream (rsce_tlvs m)
   ]
 
--- | Decode a 'ReplyShortChannelIdsEnd' payload.
+-- | Decode a t'ReplyShortChannelIdsEnd' payload.
 --
 --   >>> decode_reply_short_channel_ids_end (BS.replicate 32 0 <> "\STX")
 --   Left DecodeInvalidBool
@@ -441,7 +441,7 @@ decode_reply_short_channel_ids_end b0 = do
 
 -- query_channel_range --------------------------------------------------------
 
--- | Encode a 'QueryChannelRange' payload. Fails if 'qcr_tlvs' holds a
+-- | Encode a t'QueryChannelRange' payload. Fails if 'qcr_tlvs' holds a
 --   record of type 1.
 encode_query_channel_range
   :: QueryChannelRange -> Either EncodeError BS.ByteString
@@ -457,7 +457,7 @@ encode_query_channel_range m = do
     , t
     ]
 
--- | Decode a 'QueryChannelRange' payload.
+-- | Decode a t'QueryChannelRange' payload.
 decode_query_channel_range
   :: BS.ByteString -> Either DecodeError QueryChannelRange
 decode_query_channel_range b0 = do
@@ -480,7 +480,7 @@ decode_query_channel_range b0 = do
 
 -- reply_channel_range --------------------------------------------------------
 
--- | Encode a 'ReplyChannelRange' payload. Fails if the short channel ids
+-- | Encode a t'ReplyChannelRange' payload. Fails if the short channel ids
 --   exceed the u16 length limit (8191 of them), if the timestamps or
 --   checksums don't number one per short channel id, or if 'rcr_tlvs'
 --   holds a record of type 1 or 3.
@@ -517,7 +517,7 @@ encode_reply_channel_range m = do
   where
     pair a b = BOLT1.encode_u32 a <> BOLT1.encode_u32 b
 
--- | Decode a 'ReplyChannelRange' payload.
+-- | Decode a t'ReplyChannelRange' payload.
 --
 --   Fails on an unknown encoding type (including the deprecated zlib
 --   encoding), on @encoded_short_ids@ that isn't a whole number of short
@@ -569,7 +569,7 @@ pairs t mk n r
 
 -- gossip_timestamp_filter ----------------------------------------------------
 
--- | Encode a 'GossipTimestampFilter' payload.
+-- | Encode a t'GossipTimestampFilter' payload.
 encode_gossip_timestamp_filter :: GossipTimestampFilter -> BS.ByteString
 encode_gossip_timestamp_filter m = mconcat
   [ BOLT1.un_chain_hash (gtf_chain_hash m)
@@ -578,7 +578,7 @@ encode_gossip_timestamp_filter m = mconcat
   , BOLT1.encode_tlv_stream (gtf_tlvs m)
   ]
 
--- | Decode a 'GossipTimestampFilter' payload.
+-- | Decode a t'GossipTimestampFilter' payload.
 decode_gossip_timestamp_filter
   :: BS.ByteString -> Either DecodeError GossipTimestampFilter
 decode_gossip_timestamp_filter b0 = do

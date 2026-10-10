@@ -105,7 +105,7 @@ data Forwarding
 
 instance NFData Forwarding
 
--- | The 'MessageFlags' an origin node sets: @must_be_one@ set, the given
+-- | The t'MessageFlags' an origin node sets: @must_be_one@ set, the given
 --   @dont_forward@ bit, and no unassigned bits.
 --
 --   >>> message_flags DontForward
@@ -115,7 +115,7 @@ message_flags Forward     = MessageFlags 0x01
 message_flags DontForward = MessageFlags 0x03
 {-# INLINE message_flags #-}
 
--- | The @dont_forward@ bit of 'MessageFlags'.
+-- | The @dont_forward@ bit of t'MessageFlags'.
 --
 --   >>> message_flags_forwarding (MessageFlags 0x01)
 --   Forward
@@ -159,7 +159,7 @@ data ChannelStatus
 
 instance NFData ChannelStatus
 
--- | The 'ChannelFlags' for the given direction and status, with no
+-- | The t'ChannelFlags' for the given direction and status, with no
 --   unassigned bits set.
 --
 --   >>> channel_flags NodeTwo Disabled
@@ -175,7 +175,7 @@ channel_flags d s = ChannelFlags (dir .|. sta)
       Disabled -> 0x02
 {-# INLINE channel_flags #-}
 
--- | The @direction@ bit of 'ChannelFlags'.
+-- | The @direction@ bit of t'ChannelFlags'.
 --
 --   >>> channel_flags_direction (ChannelFlags 0x05)
 --   NodeTwo
@@ -185,7 +185,7 @@ channel_flags_direction (ChannelFlags w)
   | otherwise   = NodeOne
 {-# INLINE channel_flags_direction #-}
 
--- | The @disable@ bit of 'ChannelFlags'.
+-- | The @disable@ bit of t'ChannelFlags'.
 --
 --   >>> channel_flags_status (ChannelFlags 0x02)
 --   Disabled
@@ -213,7 +213,7 @@ newtype Alias = Alias BS.ByteString
 
 instance NFData Alias
 
--- | Construct an 'Alias' from exactly 32 bytes.
+-- | Construct an t'Alias' from exactly 32 bytes.
 --
 --   >>> alias "too short"
 --   Nothing
@@ -223,7 +223,7 @@ alias bs
   | otherwise          = Nothing
 {-# INLINE alias #-}
 
--- | The bytes of an 'Alias'.
+-- | The bytes of an t'Alias'.
 un_alias :: Alias -> BS.ByteString
 un_alias (Alias bs) = bs
 {-# INLINE un_alias #-}
@@ -234,7 +234,7 @@ newtype IPv4Addr = IPv4Addr BS.ByteString
 
 instance NFData IPv4Addr
 
--- | Construct an 'IPv4Addr' from exactly 4 bytes.
+-- | Construct an t'IPv4Addr' from exactly 4 bytes.
 --
 --   >>> ipv4_addr "\127\NUL\NUL\SOH"
 --   Just (IPv4Addr "\DEL\NUL\NUL\SOH")
@@ -244,7 +244,7 @@ ipv4_addr bs
   | otherwise         = Nothing
 {-# INLINE ipv4_addr #-}
 
--- | The bytes of an 'IPv4Addr'.
+-- | The bytes of an t'IPv4Addr'.
 un_ipv4_addr :: IPv4Addr -> BS.ByteString
 un_ipv4_addr (IPv4Addr bs) = bs
 {-# INLINE un_ipv4_addr #-}
@@ -255,14 +255,14 @@ newtype IPv6Addr = IPv6Addr BS.ByteString
 
 instance NFData IPv6Addr
 
--- | Construct an 'IPv6Addr' from exactly 16 bytes.
+-- | Construct an t'IPv6Addr' from exactly 16 bytes.
 ipv6_addr :: BS.ByteString -> Maybe IPv6Addr
 ipv6_addr bs
   | BS.length bs == 16 = Just (IPv6Addr bs)
   | otherwise          = Nothing
 {-# INLINE ipv6_addr #-}
 
--- | The bytes of an 'IPv6Addr'.
+-- | The bytes of an t'IPv6Addr'.
 un_ipv6_addr :: IPv6Addr -> BS.ByteString
 un_ipv6_addr (IPv6Addr bs) = bs
 {-# INLINE un_ipv6_addr #-}
@@ -275,14 +275,14 @@ newtype TorV2Addr = TorV2Addr BS.ByteString
 
 instance NFData TorV2Addr
 
--- | Construct a 'TorV2Addr' from exactly 12 bytes.
+-- | Construct a t'TorV2Addr' from exactly 12 bytes.
 tor_v2_addr :: BS.ByteString -> Maybe TorV2Addr
 tor_v2_addr bs
   | BS.length bs == 12 = Just (TorV2Addr bs)
   | otherwise          = Nothing
 {-# INLINE tor_v2_addr #-}
 
--- | The bytes of a 'TorV2Addr'.
+-- | The bytes of a t'TorV2Addr'.
 un_tor_v2_addr :: TorV2Addr -> BS.ByteString
 un_tor_v2_addr (TorV2Addr bs) = bs
 {-# INLINE un_tor_v2_addr #-}
@@ -294,14 +294,14 @@ newtype TorV3Addr = TorV3Addr BS.ByteString
 
 instance NFData TorV3Addr
 
--- | Construct a 'TorV3Addr' from exactly 35 bytes.
+-- | Construct a t'TorV3Addr' from exactly 35 bytes.
 tor_v3_addr :: BS.ByteString -> Maybe TorV3Addr
 tor_v3_addr bs
   | BS.length bs == 35 = Just (TorV3Addr bs)
   | otherwise          = Nothing
 {-# INLINE tor_v3_addr #-}
 
--- | The bytes of a 'TorV3Addr'.
+-- | The bytes of a t'TorV3Addr'.
 un_tor_v3_addr :: TorV3Addr -> BS.ByteString
 un_tor_v3_addr (TorV3Addr bs) = bs
 {-# INLINE un_tor_v3_addr #-}
@@ -316,7 +316,7 @@ newtype Hostname = Hostname BS.ByteString
 
 instance NFData Hostname
 
--- | Construct a 'Hostname' from at most 255 bytes.
+-- | Construct a t'Hostname' from at most 255 bytes.
 --
 --   >>> hostname "ln.example.com"
 --   Just (Hostname "ln.example.com")
@@ -328,12 +328,12 @@ hostname bs
   | otherwise           = Nothing
 {-# INLINE hostname #-}
 
--- | The bytes of a 'Hostname'.
+-- | The bytes of a t'Hostname'.
 un_hostname :: Hostname -> BS.ByteString
 un_hostname (Hostname bs) = bs
 {-# INLINE un_hostname #-}
 
--- | Whether a 'Hostname' is non-empty and ASCII, as BOLT #7 requires.
+-- | Whether a t'Hostname' is non-empty and ASCII, as BOLT #7 requires.
 --
 --   >>> fmap is_ascii_hostname (hostname "caf\233")
 --   Just False
@@ -385,7 +385,7 @@ newtype QueryFlags = QueryFlags Word64
 
 instance NFData QueryFlags
 
--- | The assigned bits of 'QueryFlags'.
+-- | The assigned bits of t'QueryFlags'.
 data QueryFlag
   = WantChannelAnnouncement  -- ^ bit 0
   | WantChannelUpdate1       -- ^ bit 1: the @channel_update@ of node 1
@@ -396,7 +396,7 @@ data QueryFlag
 
 instance NFData QueryFlag
 
--- | The 'QueryFlags' with exactly the given bits set.
+-- | The t'QueryFlags' with exactly the given bits set.
 --
 --   >>> query_flags [WantChannelAnnouncement, WantChannelUpdate2]
 --   QueryFlags 5
@@ -418,7 +418,7 @@ newtype QueryOption = QueryOption Word64
 
 instance NFData QueryOption
 
--- | The assigned bits of 'QueryOption'.
+-- | The assigned bits of t'QueryOption'.
 data QueryOptionFlag
   = WantTimestamps  -- ^ bit 0
   | WantChecksums   -- ^ bit 1
@@ -426,7 +426,7 @@ data QueryOptionFlag
 
 instance NFData QueryOptionFlag
 
--- | The 'QueryOption' with exactly the given bits set.
+-- | The t'QueryOption' with exactly the given bits set.
 --
 --   >>> query_option [WantTimestamps, WantChecksums]
 --   QueryOption 3
