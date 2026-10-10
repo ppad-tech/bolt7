@@ -790,7 +790,40 @@ validation_tests = testGroup "Validation" [
               }
         validateQueryChannelRange msg @?= Left ValidateBlockOverflow
     ]
+  , testGroup "ReplyChannelRange" [
+      testCase "ascending short_channel_ids pass" $
+        validateReplyChannelRange (testReplyRange
+          (encodeShortChannelIdList [mkScid 1 0 0, mkScid 2 0 0]))
+          @?= Right ()
+    , testCase "rejects descending short_channel_ids" $
+        validateReplyChannelRange (testReplyRange
+          (encodeShortChannelIdList [mkScid 2 0 0, mkScid 1 0 0]))
+          @?= Left ValidateScidNotAscending
+    , testCase "rejects zlib encoding (type 1)" $
+        validateReplyChannelRange (testReplyRange (BS.cons 1
+          (scidToBytes (mkScid 2 0 0) <> scidToBytes (mkScid 1 0 0))))
+          @?= Left ValidateScidEncoding
+    , testCase "rejects an unknown encoding type" $
+        validateReplyChannelRange (testReplyRange (BS.cons 2
+          (scidToBytes (mkScid 1 0 0))))
+          @?= Left ValidateScidEncoding
+    , testCase "rejects a partial short_channel_id" $
+        validateReplyChannelRange (testReplyRange (BS.cons 0
+          (scidToBytes (mkScid 1 0 0) <> BS.replicate 7 0)))
+          @?= Left ValidateScidEncoding
+    ]
   ]
+
+-- | A reply_channel_range fixture with the given encoded_short_ids.
+testReplyRange :: BS.ByteString -> ReplyChannelRange
+testReplyRange scids = ReplyChannelRange
+  { replyRangeChainHash    = testChainHash
+  , replyRangeFirstBlock   = BlockHeight 0
+  , replyRangeNumBlocks    = BlockCount 10
+  , replyRangeSyncComplete = 1
+  , replyRangeData         = scids
+  , replyRangeTlvs         = emptyTlvs
+  }
 
 -- Error Tests -----------------------------------------------------------------
 
