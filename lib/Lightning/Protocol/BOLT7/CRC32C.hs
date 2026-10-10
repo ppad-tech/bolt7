@@ -1,3 +1,4 @@
+{-# OPTIONS_HADDOCK hide #-}
 {-# LANGUAGE BangPatterns #-}
 
 -- |
@@ -6,44 +7,28 @@
 -- License: MIT
 -- Maintainer: Jared Tobin <jared@ppad.tech>
 --
--- CRC-32C (Castagnoli) implementation for BOLT #7 checksums.
---
--- This is an internal helper module implementing CRC-32C as specified
--- in RFC 3720. CRC-32C uses the Castagnoli polynomial 0x1EDC6F41.
+-- CRC-32C (Castagnoli), per RFC 3720, for @channel_update@ checksums.
 
 module Lightning.Protocol.BOLT7.CRC32C (
     crc32c
   ) where
 
-import Data.Bits (shiftR, xor, (.&.))
-import Data.ByteString (ByteString)
+import Data.Bits (complement, shiftR, xor, (.&.))
 import qualified Data.ByteString as BS
 import Data.Word (Word8, Word32)
 
--- | CRC-32C polynomial (Castagnoli): 0x1EDC6F41 reflected = 0x82F63B78
-crc32cPoly :: Word32
-crc32cPoly = 0x82F63B78
-{-# INLINE crc32cPoly #-}
+-- the Castagnoli polynomial 0x1EDC6F41, bit-reflected
+poly :: Word32
+poly = 0x82F63B78
 
--- | Compute CRC-32C of a bytestring.
---
--- >>> crc32c "123456789"
--- 0xe3069283
-crc32c :: ByteString -> Word32
-crc32c = xor 0xFFFFFFFF . BS.foldl' updateByte 0xFFFFFFFF
+-- | The CRC-32C of a byte string.
+crc32c :: BS.ByteString -> Word32
+crc32c = complement . BS.foldl' step 0xFFFFFFFF
 {-# INLINE crc32c #-}
 
--- | Update CRC with a single byte.
-updateByte :: Word32 -> Word8 -> Word32
-updateByte !crc !byte =
-  let crc' = crc `xor` fromIntegral byte
-  in  go 8 crc'
+step :: Word32 -> Word8 -> Word32
+step !crc !byte = go (8 :: Int) (crc `xor` fromIntegral byte)
   where
-    go :: Int -> Word32 -> Word32
     go 0 !c = c
-    go !n !c =
-      let c' = if c .&. 1 /= 0
-               then (c `shiftR` 1) `xor` crc32cPoly
-               else c `shiftR` 1
-      in  go (n - 1) c'
-{-# INLINE updateByte #-}
+    go n !c = go (n - 1) ((c `shiftR` 1) `xor` (poly .&. negate (c .&. 1)))
+{-# INLINE step #-}

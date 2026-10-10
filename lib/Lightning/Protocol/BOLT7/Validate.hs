@@ -1,6 +1,4 @@
-{-# OPTIONS_HADDOCK prune #-}
-
-{-# LANGUAGE BangPatterns #-}
+{-# OPTIONS_HADDOCK hide #-}
 {-# LANGUAGE DeriveGeneric #-}
 
 -- |
@@ -9,143 +7,101 @@
 -- License: MIT
 -- Maintainer: Jared Tobin <jared@ppad.tech>
 --
--- Validation functions for BOLT #7 gossip messages.
---
--- These functions check message invariants as specified in BOLT #7.
--- They do NOT verify cryptographic signatures; that requires the
--- actual public keys and is left to the caller.
+-- Stateless checks of BOLT #7 messages.
 
 module Lightning.Protocol.BOLT7.Validate (
-  -- * Error types
     ValidationError(..)
-
-  -- * Validation functions
-  , validateChannelAnnouncement
-  , validateNodeAnnouncement
-  , validateChannelUpdate
-  , validateQueryChannelRange
-  , validateReplyChannelRange
+  , validate_channel_announcement
+  , validate_node_announcement
+  , validate_channel_update
+  , validate_query_short_channel_ids
+  , validate_query_channel_range
+  , validate_reply_channel_range
   ) where
 
 import Control.DeepSeq (NFData)
-import Data.Word (Word32, Word64)
+import Data.Word (Word64)
 import GHC.Generics (Generic)
-import Lightning.Protocol.BOLT7.Codec (decodeShortChannelIdList)
+import Lightning.Protocol.BOLT1 (ShortChannelId)
 import Lightning.Protocol.BOLT7.Messages
 import Lightning.Protocol.BOLT7.Types
 
--- | Validation errors.
+-- | A rule a message breaks.
 data ValidationError
-  = ValidateNodeIdOrdering        -- ^ node_id_1 must be < node_id_2
-  | ValidateUnknownEvenFeature    -- ^ Unknown even feature bit set
-  | ValidateHtlcAmounts           -- ^ htlc_minimum_msat > htlc_maximum_msat
-  | ValidateBlockOverflow         -- ^ first_blocknum + number_of_blocks overflow
-  | ValidateScidNotAscending      -- ^ short_channel_ids not in ascending order
-  | ValidateMultipleDns           -- ^ more than one DNS hostname address
-  | ValidateScidEncoding          -- ^ encoded_short_ids cannot be decoded
+  = ValidateNodeIdOrdering
+    -- ^ @node_id_1@ is not lexicographically less than @node_id_2@
+  | ValidateMultipleDns
+    -- ^ more than one DNS hostname descriptor
+  | ValidateHtlcAmounts
+    -- ^ @htlc_minimum_msat@ exceeds @htlc_maximum_msat@
+  | ValidateZeroBlocks
+    -- ^ @number_of_blocks@ is 0
+  | ValidateBlockOverflow
+    -- ^ the block range extends past block 2^32 - 1
+  | ValidateScidNotAscending
+    -- ^ short channel ids are not in strictly ascending order
   deriving (Eq, Show, Generic)
 
 instance NFData ValidationError
 
--- | Validate channel_announcement message.
+-- | Check that @node_id_1@ is lexicographically less than @node_id_2@;
+--   a receiver must ignore the message otherwise.
 --
--- Checks:
---
--- * node_id_1 < node_id_2 (lexicographic ordering)
--- * Feature bits do not contain unknown even bits
-validateChannelAnnouncement :: ChannelAnnouncement
-                            -> Either ValidationError ()
-validateChannelAnnouncement msg = do
-  -- Check node_id ordering
-  let nid1 = channelAnnNodeId1 msg
-      nid2 = channelAnnNodeId2 msg
-  if nid1 >= nid2
-    then Left ValidateNodeIdOrdering
-    else Right ()
-  -- Check feature bits
-  validateFeatureBits (channelAnnFeatures msg)
+--   Signatures and feature bits are not checked here; see
+--   'Lightning.Protocol.BOLT7.verify_channel_announcement' and
+--   ppad-bolt9's @validate_remote@.
+validate_channel_announcement
+  :: ChannelAnnouncement -> Either ValidationError ()
+validate_channel_announcement m
+  | ca_node_id_1 m < ca_node_id_2 m = Right ()
+  | otherwise                       = Left ValidateNodeIdOrdering
 
--- | Validate node_announcement message.
+-- | Check that at most one DNS hostname is announced; a receiver must
+--   not forward the message otherwise.
 --
--- Checks:
---
--- * Feature bits do not contain unknown even bits
--- * At most one DNS hostname address. Per BOLT #7 the origin MUST
---   NOT announce more than one; a receiver SHOULD ignore all but the
---   first, and MUST NOT forward the message.
---
--- Note: alias UTF-8 validation is not enforced; the spec allows
--- non-UTF-8 aliases.
-validateNodeAnnouncement :: NodeAnnouncement -> Either ValidationError ()
-validateNodeAnnouncement msg = do
-  validateFeatureBits (nodeAnnFeatures msg)
-  if length [ () | AddrDNS _ _ <- nodeAnnAddresses msg ] > 1
-    then Left ValidateMultipleDns
-    else Right ()
-
--- | Validate channel_update message.
---
--- Checks:
---
--- * htlc_minimum_msat <= htlc_maximum_msat
-validateChannelUpdate :: ChannelUpdate
-                      -> Either ValidationError ()
-validateChannelUpdate msg
-  | getHtlcMinimumMsat (chanUpdateHtlcMinMsat msg)
-      > getHtlcMaximumMsat (chanUpdateHtlcMaxMsat msg)
-      = Left ValidateHtlcAmounts
+--   Descriptors a receiver should merely ignore (Tor v2, port 0, a
+--   hostname that isn't ASCII) are left to
+--   'Lightning.Protocol.BOLT7.usable_addresses'.
+validate_node_announcement :: NodeAnnouncement -> Either ValidationError ()
+validate_node_announcement m
+  | length [ () | AddrDNS _ _ <- na_addresses m ] > 1 =
+      Left ValidateMultipleDns
   | otherwise = Right ()
 
--- | Validate query_channel_range message.
---
--- Checks:
---
--- * first_blocknum + number_of_blocks does not overflow
-validateQueryChannelRange :: QueryChannelRange
-                          -> Either ValidationError ()
-validateQueryChannelRange msg = do
-  let first = fromIntegral
-        (getBlockHeight (queryRangeFirstBlock msg))
-        :: Word64
-      num = fromIntegral
-        (getBlockCount (queryRangeNumBlocks msg))
-        :: Word64
-  if first + num > fromIntegral (maxBound :: Word32)
-    then Left ValidateBlockOverflow
-    else Right ()
+-- | Check that @htlc_minimum_msat@ does not exceed @htlc_maximum_msat@;
+--   a receiver should not route through the channel otherwise.
+validate_channel_update :: ChannelUpdate -> Either ValidationError ()
+validate_channel_update m
+  | cu_htlc_minimum_msat m > cu_htlc_maximum_msat m = Left ValidateHtlcAmounts
+  | otherwise = Right ()
 
--- | Validate reply_channel_range message.
---
--- Checks:
---
--- * Encoded short_channel_ids decode: the encoding type is 0
---   (uncompressed; type 1, zlib, MUST NOT be used) and the data is
---   a whole number of short_channel_ids
--- * Encoded short_channel_ids are in ascending order
-validateReplyChannelRange :: ReplyChannelRange -> Either ValidationError ()
-validateReplyChannelRange msg =
-  case decodeShortChannelIdList (replyRangeData msg) of
-    Left _ -> Left ValidateScidEncoding
-    Right scids -> checkAscending scids
+-- | Check that the short channel ids are in strictly ascending order, as
+--   their encoding requires.
+validate_query_short_channel_ids
+  :: QueryShortChannelIds -> Either ValidationError ()
+validate_query_short_channel_ids = ascending . qsci_short_channel_ids
+
+-- | Check that @number_of_blocks@ is at least 1, as the sender must
+--   ensure, and that the range ends at or before block 2^32 - 1 (a
+--   library rule: such a range can't be represented).
+validate_query_channel_range
+  :: QueryChannelRange -> Either ValidationError ()
+validate_query_channel_range m
+  | num == 0                  = Left ValidateZeroBlocks
+  | first + num > 0x100000000 = Left ValidateBlockOverflow
+  | otherwise                 = Right ()
   where
-    checkAscending [] = Right ()
-    checkAscending [_] = Right ()
-    checkAscending (a:b:rest)
-      | a < b = checkAscending (b:rest)
-      | otherwise = Left ValidateScidNotAscending
+    first = fromIntegral (qcr_first_blocknum m) :: Word64
+    num   = fromIntegral (qcr_number_of_blocks m) :: Word64
 
--- Internal helpers -----------------------------------------------------------
+-- | Check that the short channel ids are in strictly ascending order, as
+--   their encoding requires.
+validate_reply_channel_range
+  :: ReplyChannelRange -> Either ValidationError ()
+validate_reply_channel_range = ascending . rcr_short_channel_ids
 
--- | Validate feature bits - reject unknown even bits.
---
--- Per BOLT #9, even feature bits are "required" and odd bits are
--- "optional". A node MUST fail if an unknown even bit is set.
---
--- For this library, we consider all feature bits as "known" (since we
--- don't implement feature negotiation). The caller should validate
--- against their own set of supported features.
-validateFeatureBits :: FeatureBits -> Either ValidationError ()
-validateFeatureBits _features = Right ()
--- Note: Full feature validation requires knowing which features are
--- supported by the implementation. For now we accept all features.
--- The caller should implement their own feature bit validation.
+ascending :: [ShortChannelId] -> Either ValidationError ()
+ascending (a : rest@(b : _))
+  | a < b     = ascending rest
+  | otherwise = Left ValidateScidNotAscending
+ascending _ = Right ()
