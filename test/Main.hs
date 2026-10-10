@@ -602,7 +602,7 @@ hash_tests = testGroup "Hash Functions" [
           Left e -> assertFailure $ "encode failed: " ++ show e
           Right msg -> do
             let hashVal = channelAnnouncementHash msg
-            BS.length hashVal @?= 32
+            fmap BS.length hashVal @?= Just 32
     , testCase "nodeAnnouncementHash produces 32 bytes" $ do
         case encodeNodeAnnouncement NodeAnnouncement
               { nodeAnnSignature = testSignature
@@ -616,7 +616,7 @@ hash_tests = testGroup "Hash Functions" [
           Left e -> assertFailure $ "encode failed: " ++ show e
           Right msg -> do
             let hashVal = nodeAnnouncementHash msg
-            BS.length hashVal @?= 32
+            fmap BS.length hashVal @?= Just 32
     , testCase "channelUpdateHash produces 32 bytes" $ do
         let msg = encodeChannelUpdate ChannelUpdate
               { chanUpdateSignature       = testSignature
@@ -633,7 +633,7 @@ hash_tests = testGroup "Hash Functions" [
               , chanUpdateHtlcMaxMsat     = HtlcMaximumMsat 1000000000
               }
             hashVal = channelUpdateHash msg
-        BS.length hashVal @?= 32
+        fmap BS.length hashVal @?= Just 32
     ]
   , testGroup "Checksum" [
       testCase "channelUpdateChecksum produces consistent result" $ do
