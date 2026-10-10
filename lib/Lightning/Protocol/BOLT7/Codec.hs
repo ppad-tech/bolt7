@@ -201,6 +201,18 @@ decodeFeatureBits bs = do
 {-# INLINE decodeFeatureBits #-}
 
 -- | Decode addresses list (length-prefixed).
+--
+-- Follows the BOLT #7 receiver rules for address descriptors:
+--
+-- * parsing stops at the first descriptor of an unknown type, and
+--   the remaining address bytes are ignored;
+-- * deprecated Tor v2 descriptors (type 3) are skipped;
+-- * descriptors with port 0 are skipped;
+-- * DNS descriptors whose hostname is empty or not ASCII are
+--   skipped.
+--
+-- A descriptor of a known type that @addrlen@ cannot hold is a
+-- decoding error.
 decodeAddresses :: ByteString -> Either DecodeError ([Address], ByteString)
 decodeAddresses bs = do
   (addrData, rest) <- decodeLenPrefixed bs
@@ -211,41 +223,33 @@ decodeAddresses bs = do
     parseAddrs !d
       | BS.null d = Right []
       | otherwise = do
-          (addr, d') <- parseOneAddr d
-          addrs <- parseAddrs d'
-          Right (addr : addrs)
+          (typ, d1) <- decodeU8 d
+          case typ of
+            1 -> fixedAddr ipv4AddrLen (fmap AddrIPv4 . ipv4Addr) d1
+            2 -> fixedAddr ipv6AddrLen (fmap AddrIPv6 . ipv6Addr) d1
+            3 -> do  -- Tor v2 (deprecated; 10-byte onion + port)
+              (_, d2) <- decodeBytes 12 d1
+              parseAddrs d2
+            4 -> fixedAddr torV3AddrLen (fmap AddrTorV3 . torV3Addr) d1
+            5 -> do  -- DNS hostname
+              (hostLen, d2) <- decodeU8 d1
+              (hostBytes, d3) <- decodeBytes (fromIntegral hostLen) d2
+              (port, d4) <- decodeU16 d3
+              keep (fmap AddrDNS (hostname hostBytes)) port d4
+            _ -> Right []  -- unknown type: ignore the rest
 
-    parseOneAddr :: ByteString -> Either DecodeError (Address, ByteString)
-    parseOneAddr d = do
-      (typ, d1) <- decodeU8 d
-      case typ of
-        1 -> do  -- IPv4
-          (addrBytes, d2) <- decodeBytes ipv4AddrLen d1
-          (port, d3) <- decodeU16 d2
-          case ipv4Addr addrBytes of
-            Nothing -> Left DecodeInvalidAddress
-            Just a  -> Right (AddrIPv4 a port, d3)
-        2 -> do  -- IPv6
-          (addrBytes, d2) <- decodeBytes ipv6AddrLen d1
-          (port, d3) <- decodeU16 d2
-          case ipv6Addr addrBytes of
-            Nothing -> Left DecodeInvalidAddress
-            Just a  -> Right (AddrIPv6 a port, d3)
-        4 -> do  -- Tor v3
-          (addrBytes, d2) <- decodeBytes torV3AddrLen d1
-          (port, d3) <- decodeU16 d2
-          case torV3Addr addrBytes of
-            Nothing -> Left DecodeInvalidAddress
-            Just a  -> Right (AddrTorV3 a port, d3)
-        5 -> do  -- DNS hostname
-          (hostLen, d2) <- decodeU8 d1
-          (hostBytes, d3) <-
-            decodeBytes (fromIntegral hostLen) d2
-          (port, d4) <- decodeU16 d3
-          case hostname hostBytes of
-            Nothing -> Left DecodeInvalidAddress
-            Just h  -> Right (AddrDNS h port, d4)
-        _ -> Left DecodeInvalidAddress  -- Unknown address type
+    fixedAddr :: Int -> (ByteString -> Maybe (Word16 -> Address))
+              -> ByteString -> Either DecodeError [Address]
+    fixedAddr len mk d = do
+      (addrBytes, d1) <- decodeBytes len d
+      (port, d2) <- decodeU16 d1
+      keep (mk addrBytes) port d2
+
+    keep :: Maybe (Word16 -> Address) -> Word16 -> ByteString
+         -> Either DecodeError [Address]
+    keep mk port d = case mk of
+      Just f | port /= 0 -> fmap (f port :) (parseAddrs d)
+      _ -> parseAddrs d
 
 -- Channel announcement --------------------------------------------------------
 

@@ -41,6 +41,7 @@ data ValidationError
   | ValidateHtlcAmounts           -- ^ htlc_minimum_msat > htlc_maximum_msat
   | ValidateBlockOverflow         -- ^ first_blocknum + number_of_blocks overflow
   | ValidateScidNotAscending      -- ^ short_channel_ids not in ascending order
+  | ValidateMultipleDns           -- ^ more than one DNS hostname address
   deriving (Eq, Show, Generic)
 
 instance NFData ValidationError
@@ -68,12 +69,18 @@ validateChannelAnnouncement msg = do
 -- Checks:
 --
 -- * Feature bits do not contain unknown even bits
+-- * At most one DNS hostname address. Per BOLT #7 the origin MUST
+--   NOT announce more than one; a receiver SHOULD ignore all but the
+--   first, and MUST NOT forward the message.
 --
--- Note: Address list validation (duplicate DNS entries) and alias
--- UTF-8 validation are not enforced; the spec allows non-UTF-8 aliases.
+-- Note: alias UTF-8 validation is not enforced; the spec allows
+-- non-UTF-8 aliases.
 validateNodeAnnouncement :: NodeAnnouncement -> Either ValidationError ()
 validateNodeAnnouncement msg = do
   validateFeatureBits (nodeAnnFeatures msg)
+  if length [ () | AddrDNS _ _ <- nodeAnnAddresses msg ] > 1
+    then Left ValidateMultipleDns
+    else Right ()
 
 -- | Validate channel_update message.
 --
