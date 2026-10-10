@@ -420,7 +420,7 @@ encodeChannelUpdate msg = mconcat
 -- | Decode channel_update message.
 --
 -- The message_flags byte is read from the wire but not stored.
--- Per BOLT #7, 'htlc_maximum_msat' is always present, and
+-- Per BOLT #7, @htlc_maximum_msat@ is always present, and
 -- receivers ignore the @must_be_one@ bit.
 decodeChannelUpdate :: ByteString
                     -> Either DecodeError
