@@ -42,6 +42,7 @@ data ValidationError
   | ValidateBlockOverflow         -- ^ first_blocknum + number_of_blocks overflow
   | ValidateScidNotAscending      -- ^ short_channel_ids not in ascending order
   | ValidateMultipleDns           -- ^ more than one DNS hostname address
+  | ValidateScidEncoding          -- ^ encoded_short_ids cannot be decoded
   deriving (Eq, Show, Generic)
 
 instance NFData ValidationError
@@ -117,11 +118,14 @@ validateQueryChannelRange msg = do
 --
 -- Checks:
 --
+-- * Encoded short_channel_ids decode: the encoding type is 0
+--   (uncompressed; type 1, zlib, MUST NOT be used) and the data is
+--   a whole number of short_channel_ids
 -- * Encoded short_channel_ids are in ascending order
 validateReplyChannelRange :: ReplyChannelRange -> Either ValidationError ()
 validateReplyChannelRange msg =
   case decodeShortChannelIdList (replyRangeData msg) of
-    Left _ -> Right ()  -- Can't decode, skip validation
+    Left _ -> Left ValidateScidEncoding
     Right scids -> checkAscending scids
   where
     checkAscending [] = Right ()
