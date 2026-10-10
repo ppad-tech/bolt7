@@ -4,7 +4,7 @@ module Main where
 
 import qualified Data.ByteString as BS
 import Data.Maybe (fromJust)
-import Data.Word (Word16, Word32)
+import Data.Word (Word8, Word16, Word32)
 import Lightning.Protocol.BOLT1 (TlvStream, unsafeTlvStream)
 import Lightning.Protocol.BOLT7
 import Lightning.Protocol.BOLT7.CRC32C (crc32c)
@@ -78,6 +78,28 @@ mkScid :: Word32 -> Word32 -> Word16 -> ShortChannelId
 mkScid b t o = case shortChannelId b t o of
   Just s  -> s
   Nothing -> error "mkScid: invalid test fixture"
+
+-- | A channel_update fixture.
+testChannelUpdate :: ChannelUpdate
+testChannelUpdate = ChannelUpdate
+  { chanUpdateSignature       = testSignature
+  , chanUpdateChainHash       = testChainHash
+  , chanUpdateShortChanId     = testShortChannelId
+  , chanUpdateTimestamp       = 1234567890
+  , chanUpdateChanFlags       = ChannelFlags
+      { cfDirection = NodeOne, cfStatus = Enabled }
+  , chanUpdateCltvExpDelta    = CltvExpiryDelta 144
+  , chanUpdateHtlcMinMsat     = HtlcMinimumMsat 1000
+  , chanUpdateFeeBaseMsat     = FeeBaseMsat 1000
+  , chanUpdateFeeProportional = FeeProportionalMillionths 100
+  , chanUpdateHtlcMaxMsat     = HtlcMaximumMsat 1000000000
+  }
+
+-- | Replace the byte at an offset (no-op past the end).
+setByte :: Int -> Word8 -> BS.ByteString -> BS.ByteString
+setByte i w bs
+  | i < 0 || i >= BS.length bs = bs
+  | otherwise = BS.take i bs <> BS.singleton w <> BS.drop (i + 1) bs
 
 -- Type Tests ------------------------------------------------------------------
 
@@ -237,6 +259,22 @@ channel_update_tests = testGroup "ChannelUpdate" [
       case decodeChannelUpdate encoded of
         Right (decoded, _) -> decoded @?= msg
         Left e -> assertFailure $ "decode failed: " ++ show e
+  , testCase "encoder sets must_be_one and emits htlc_maximum_msat" $ do
+      let encoded = encodeChannelUpdate testChannelUpdate
+      BS.length encoded @?= 136
+      BS.take 1 (BS.drop 108 encoded) @?= BS.singleton 0x01
+      BS.drop 128 encoded @?= BS.pack [0, 0, 0, 0, 0x3b, 0x9a, 0xca, 0]
+  , testCase "decodes htlc_maximum_msat when must_be_one is clear" $ do
+      -- receivers ignore must_be_one; the field is always present
+      let wire = setByte 108 0x00 (encodeChannelUpdate testChannelUpdate)
+      case decodeChannelUpdate wire of
+        Right (decoded, rest) -> do
+          decoded @?= testChannelUpdate
+          rest @?= BS.empty
+        Left e -> assertFailure $ "decode failed: " ++ show e
+  , testCase "rejects update without htlc_maximum_msat" $ do
+      let wire = BS.take 128 (encodeChannelUpdate testChannelUpdate)
+      decodeChannelUpdate wire @?= Left DecodeInsufficientBytes
   ]
 
 -- Announcement Signatures Tests -----------------------------------------------
