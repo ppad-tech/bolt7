@@ -122,9 +122,8 @@ instance NFData NodeAnnouncement
 --
 -- Communicates per-direction routing parameters.
 --
--- The message_flags field is derived automatically during
--- encoding: bit 0 is set when 'chanUpdateHtlcMaxMsat' is
--- 'Just'.
+-- The message_flags field is not stored: the encoder always
+-- writes bit 0 (@must_be_one@), and the decoder ignores it.
 data ChannelUpdate = ChannelUpdate
   { chanUpdateSignature       :: !Signature
     -- ^ Signature of message
@@ -144,9 +143,8 @@ data ChannelUpdate = ChannelUpdate
     -- ^ Base fee msat
   , chanUpdateFeeProportional :: !FeeProportionalMillionths
     -- ^ Proportional fee
-  , chanUpdateHtlcMaxMsat     :: !(Maybe HtlcMaximumMsat)
-    -- ^ Max HTLC (optional; presence sets message_flags
-    -- bit 0)
+  , chanUpdateHtlcMaxMsat     :: !HtlcMaximumMsat
+    -- ^ Max HTLC msat
   }
   deriving (Eq, Show, Generic)
 

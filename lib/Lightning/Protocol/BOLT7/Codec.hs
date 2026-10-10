@@ -50,7 +50,6 @@ module Lightning.Protocol.BOLT7.Codec (
   ) where
 
 import Control.DeepSeq (NFData)
-import Data.Bits ((.&.))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Word (Word8, Word16, Word32, Word64)
@@ -370,39 +369,34 @@ decodeNodeAnnouncement bs = do
 
 -- | Encode channel_update message.
 --
--- The message_flags byte is derived from the presence of
--- 'chanUpdateHtlcMaxMsat': bit 0 is set when the field is
--- 'Just'.
+-- The message_flags byte is always 0x01: bit 0 (@must_be_one@) is
+-- set, as BOLT #7 requires, and no other bit is.
 encodeChannelUpdate :: ChannelUpdate -> ByteString
-encodeChannelUpdate msg =
-  let !msgFlagsByte = case chanUpdateHtlcMaxMsat msg of
-        Nothing -> 0x00 :: Word8
-        Just _  -> 0x01
-  in  mconcat
-    [ unSignature (chanUpdateSignature msg)
-    , unChainHash (chanUpdateChainHash msg)
-    , scidToBytes (chanUpdateShortChanId msg)
-    , Prim.encodeU32 (chanUpdateTimestamp msg)
-    , BS.singleton msgFlagsByte
-    , BS.singleton (encodeChannelFlags (chanUpdateChanFlags msg))
-    , Prim.encodeU16
-        (getCltvExpiryDelta (chanUpdateCltvExpDelta msg))
-    , Prim.encodeU64
-        (getHtlcMinimumMsat (chanUpdateHtlcMinMsat msg))
-    , Prim.encodeU32
-        (getFeeBaseMsat (chanUpdateFeeBaseMsat msg))
-    , Prim.encodeU32
-        (getFeeProportionalMillionths
-          (chanUpdateFeeProportional msg))
-    , case chanUpdateHtlcMaxMsat msg of
-        Nothing -> BS.empty
-        Just m  -> Prim.encodeU64 (getHtlcMaximumMsat m)
-    ]
+encodeChannelUpdate msg = mconcat
+  [ unSignature (chanUpdateSignature msg)
+  , unChainHash (chanUpdateChainHash msg)
+  , scidToBytes (chanUpdateShortChanId msg)
+  , Prim.encodeU32 (chanUpdateTimestamp msg)
+  , BS.singleton 0x01
+  , BS.singleton (encodeChannelFlags (chanUpdateChanFlags msg))
+  , Prim.encodeU16
+      (getCltvExpiryDelta (chanUpdateCltvExpDelta msg))
+  , Prim.encodeU64
+      (getHtlcMinimumMsat (chanUpdateHtlcMinMsat msg))
+  , Prim.encodeU32
+      (getFeeBaseMsat (chanUpdateFeeBaseMsat msg))
+  , Prim.encodeU32
+      (getFeeProportionalMillionths
+        (chanUpdateFeeProportional msg))
+  , Prim.encodeU64
+      (getHtlcMaximumMsat (chanUpdateHtlcMaxMsat msg))
+  ]
 
 -- | Decode channel_update message.
 --
--- The message_flags byte is read from the wire but not stored;
--- bit 0 determines whether 'htlc_maximum_msat' is present.
+-- The message_flags byte is read from the wire but not stored.
+-- Per BOLT #7, 'htlc_maximum_msat' is always present, and
+-- receivers ignore the @must_be_one@ bit.
 decodeChannelUpdate :: ByteString
                     -> Either DecodeError
                          (ChannelUpdate, ByteString)
@@ -411,31 +405,25 @@ decodeChannelUpdate bs = do
   (chainH, bs2)       <- decodeChainHash bs1
   (scid, bs3)         <- decodeShortChannelId bs2
   (timestamp, bs4)    <- decodeU32 bs3
-  (msgFlagsRaw, bs5)  <- decodeU8 bs4
+  (_msgFlags, bs5)    <- decodeU8 bs4
   (chanFlagsRaw, bs6) <- decodeU8 bs5
   (cltvDelta, bs7)    <- decodeU16 bs6
   (htlcMin, bs8)      <- decodeU64 bs7
   (feeBase, bs9)      <- decodeU32 bs8
   (feeProp, bs10)     <- decodeU32 bs9
-  let !chanFlags' = decodeChannelFlags chanFlagsRaw
-      !htlcMaxPresent = msgFlagsRaw .&. 0x01 /= 0
-  (htlcMax, rest) <- if htlcMaxPresent
-    then do
-      (m, r) <- decodeU64 bs10
-      Right (Just (HtlcMaximumMsat m), r)
-    else Right (Nothing, bs10)
+  (htlcMax, rest)     <- decodeU64 bs10
   let msg = ChannelUpdate
         { chanUpdateSignature       = sig
         , chanUpdateChainHash       = chainH
         , chanUpdateShortChanId     = scid
         , chanUpdateTimestamp       = timestamp
-        , chanUpdateChanFlags       = chanFlags'
+        , chanUpdateChanFlags       = decodeChannelFlags chanFlagsRaw
         , chanUpdateCltvExpDelta    = CltvExpiryDelta cltvDelta
         , chanUpdateHtlcMinMsat     = HtlcMinimumMsat htlcMin
         , chanUpdateFeeBaseMsat     = FeeBaseMsat feeBase
         , chanUpdateFeeProportional =
             FeeProportionalMillionths feeProp
-        , chanUpdateHtlcMaxMsat     = htlcMax
+        , chanUpdateHtlcMaxMsat     = HtlcMaximumMsat htlcMax
         }
   Right (msg, rest)
 

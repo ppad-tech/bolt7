@@ -201,7 +201,7 @@ node_announcement_tests = testGroup "NodeAnnouncement" [
 
 channel_update_tests :: TestTree
 channel_update_tests = testGroup "ChannelUpdate" [
-    testCase "encode/decode roundtrip without htlc_maximum_msat" $ do
+    testCase "encode/decode roundtrip (NodeTwo)" $ do
       let msg = ChannelUpdate
             { chanUpdateSignature      = testSignature
             , chanUpdateChainHash      = testChainHash
@@ -213,13 +213,13 @@ channel_update_tests = testGroup "ChannelUpdate" [
             , chanUpdateHtlcMinMsat    = HtlcMinimumMsat 1000
             , chanUpdateFeeBaseMsat    = FeeBaseMsat 1000
             , chanUpdateFeeProportional = FeeProportionalMillionths 100
-            , chanUpdateHtlcMaxMsat    = Nothing
+            , chanUpdateHtlcMaxMsat    = HtlcMaximumMsat 1000000000
             }
           encoded = encodeChannelUpdate msg
       case decodeChannelUpdate encoded of
         Right (decoded, _) -> decoded @?= msg
         Left e -> assertFailure $ "decode failed: " ++ show e
-  , testCase "encode/decode roundtrip with htlc_maximum_msat" $ do
+  , testCase "encode/decode roundtrip (NodeOne)" $ do
       let msg = ChannelUpdate
             { chanUpdateSignature      = testSignature
             , chanUpdateChainHash      = testChainHash
@@ -231,7 +231,7 @@ channel_update_tests = testGroup "ChannelUpdate" [
             , chanUpdateHtlcMinMsat    = HtlcMinimumMsat 1000
             , chanUpdateFeeBaseMsat    = FeeBaseMsat 500
             , chanUpdateFeeProportional = FeeProportionalMillionths 50
-            , chanUpdateHtlcMaxMsat    = Just (HtlcMaximumMsat 1000000000)
+            , chanUpdateHtlcMaxMsat    = HtlcMaximumMsat 1000000000
             }
           encoded = encodeChannelUpdate msg
       case decodeChannelUpdate encoded of
@@ -432,7 +432,7 @@ hash_tests = testGroup "Hash Functions" [
               , chanUpdateHtlcMinMsat     = HtlcMinimumMsat 1000
               , chanUpdateFeeBaseMsat     = FeeBaseMsat 1000
               , chanUpdateFeeProportional = FeeProportionalMillionths 100
-              , chanUpdateHtlcMaxMsat     = Nothing
+              , chanUpdateHtlcMaxMsat     = HtlcMaximumMsat 1000000000
               }
             hashVal = channelUpdateHash msg
         BS.length hashVal @?= 32
@@ -452,7 +452,7 @@ hash_tests = testGroup "Hash Functions" [
               , chanUpdateHtlcMinMsat     = HtlcMinimumMsat 1000
               , chanUpdateFeeBaseMsat     = FeeBaseMsat 1000
               , chanUpdateFeeProportional = FeeProportionalMillionths 100
-              , chanUpdateHtlcMaxMsat     = Nothing
+              , chanUpdateHtlcMaxMsat     = HtlcMaximumMsat 1000000000
               }
             cs1 = channelUpdateChecksum msg
             cs2 = channelUpdateChecksum msg
@@ -471,7 +471,7 @@ hash_tests = testGroup "Hash Functions" [
               , chanUpdateHtlcMinMsat     = HtlcMinimumMsat 1000
               , chanUpdateFeeBaseMsat     = FeeBaseMsat 1000
               , chanUpdateFeeProportional = FeeProportionalMillionths 100
-              , chanUpdateHtlcMaxMsat     = Nothing
+              , chanUpdateHtlcMaxMsat     = HtlcMaximumMsat 1000000000
               }
             msg2 = encodeChannelUpdate ChannelUpdate
               { chanUpdateSignature       = testSignature
@@ -485,7 +485,7 @@ hash_tests = testGroup "Hash Functions" [
               , chanUpdateHtlcMinMsat     = HtlcMinimumMsat 1000
               , chanUpdateFeeBaseMsat     = FeeBaseMsat 1000
               , chanUpdateFeeProportional = FeeProportionalMillionths 100
-              , chanUpdateHtlcMaxMsat     = Nothing
+              , chanUpdateHtlcMaxMsat     = HtlcMaximumMsat 1000000000
               }
         channelUpdateChecksum msg1 @?= channelUpdateChecksum msg2
     ]
@@ -541,7 +541,7 @@ validation_tests = testGroup "Validation" [
               , chanUpdateHtlcMinMsat     = HtlcMinimumMsat 1000
               , chanUpdateFeeBaseMsat     = FeeBaseMsat 1000
               , chanUpdateFeeProportional = FeeProportionalMillionths 100
-              , chanUpdateHtlcMaxMsat     = Just (HtlcMaximumMsat 1000000000)
+              , chanUpdateHtlcMaxMsat     = HtlcMaximumMsat 1000000000
               }
         validateChannelUpdate msg @?= Right ()
     , testCase "rejects htlc_min > htlc_max" $ do
@@ -557,7 +557,7 @@ validation_tests = testGroup "Validation" [
               , chanUpdateHtlcMinMsat     = HtlcMinimumMsat 2000000000  -- > htlcMax
               , chanUpdateFeeBaseMsat     = FeeBaseMsat 1000
               , chanUpdateFeeProportional = FeeProportionalMillionths 100
-              , chanUpdateHtlcMaxMsat     = Just (HtlcMaximumMsat 1000000000)
+              , chanUpdateHtlcMaxMsat     = HtlcMaximumMsat 1000000000
               }
         validateChannelUpdate msg @?= Left ValidateHtlcAmounts
     ]
@@ -661,7 +661,7 @@ propChannelUpdateRoundtrip timestamp cltvDelta = property $ do
         , chanUpdateHtlcMinMsat    = HtlcMinimumMsat 1000
         , chanUpdateFeeBaseMsat    = FeeBaseMsat 1000
         , chanUpdateFeeProportional = FeeProportionalMillionths 100
-        , chanUpdateHtlcMaxMsat    = Nothing
+        , chanUpdateHtlcMaxMsat    = HtlcMaximumMsat 1000000000
         }
       encoded = encodeChannelUpdate msg
   case decodeChannelUpdate encoded of

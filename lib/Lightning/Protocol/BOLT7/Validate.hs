@@ -79,21 +79,14 @@ validateNodeAnnouncement msg = do
 --
 -- Checks:
 --
--- * htlc_minimum_msat <= htlc_maximum_msat (if present)
---
--- Note: message_flags consistency is enforced at the type
--- level -- the flag is derived from the presence of
--- 'chanUpdateHtlcMaxMsat'.
+-- * htlc_minimum_msat <= htlc_maximum_msat
 validateChannelUpdate :: ChannelUpdate
                       -> Either ValidationError ()
-validateChannelUpdate msg = do
-  case chanUpdateHtlcMaxMsat msg of
-    Nothing -> Right ()
-    Just htlcMax ->
-      let htlcMin = chanUpdateHtlcMinMsat msg
-      in  if getHtlcMinimumMsat htlcMin > getHtlcMaximumMsat htlcMax
-          then Left ValidateHtlcAmounts
-          else Right ()
+validateChannelUpdate msg
+  | getHtlcMinimumMsat (chanUpdateHtlcMinMsat msg)
+      > getHtlcMaximumMsat (chanUpdateHtlcMaxMsat msg)
+      = Left ValidateHtlcAmounts
+  | otherwise = Right ()
 
 -- | Validate query_channel_range message.
 --
