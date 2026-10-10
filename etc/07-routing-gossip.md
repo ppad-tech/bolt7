@@ -86,6 +86,8 @@ A node:
   - If the `open_channel` message has the `announce_channel` bit set AND a `shutdown` message has not been sent:
     - After `channel_ready` has been sent and received AND the funding transaction has enough confirmations to ensure that it won't be reorganized:
       - MUST send `announcement_signatures` for the funding transaction.
+    - After `splice_locked` has been sent and received AND the splice transaction has enough confirmations to ensure that it won't be reorganized:
+      - MUST send `announcement_signatures` for the matching splice transaction.
   - Otherwise:
     - MUST NOT send the `announcement_signatures` message.
   - Upon reconnection (once the above timing requirements have been met):
@@ -93,25 +95,35 @@ A node:
       - MUST send its own `announcement_signatures` message.
     - If it receives `announcement_signatures` for the funding transaction:
       - MUST respond with its own `announcement_signatures` message.
+    - If it has NOT previously received `announcement_signatures` for a splice transaction:
+      - MUST SET the `announcement_signatures` bit in the `retransmit_flags` of `my_current_funding_locked`.
+    - If the `announcement_signatures` bit is set in the *remote* `retransmit_flags`:
+      - MUST retransmit its `announcement_signatures` message.
 
 A recipient node:
-  - If the `short_channel_id` is NOT correct:
-    - SHOULD send a `warning` and close the connection, or send an
-      `error` and fail the channel.
+  - If the `short_channel_id` doesn't match one of its funding transactions:
+    - SHOULD send a `warning`.
   - If the `node_signature` OR the `bitcoin_signature` is NOT correct:
-    - MAY send a `warning` and close the connection, or send an
-      `error` and fail the channel.
+    - MAY send a `warning` and close the connection, or send an `error` and fail the channel.
   - If it has sent AND received a valid `announcement_signatures` message:
     - If the funding transaction has at least 6 confirmations:
       - SHOULD queue the `channel_announcement` message for its peers.
   - If it has not sent `channel_ready`:
     - SHOULD defer handling the `announcement_signatures` until after it has sent `channel_ready`.
+  - If it has not sent `splice_locked` for the transaction matching this `short_channel_id`:
+    - SHOULD defer handling the `announcement_signatures` until after it has sent `splice_locked`.
 
 ### Rationale
 
 Channels must not be announced before the funding transaction has enough
 confirmations, because a blockchain reorganization would otherwise invalidate
 the `short_channel_id`.
+
+When splicing is used, a `channel_announcement` is generated for every splice
+transaction once both sides have sent `splice_locked`. This lets the network
+know that the transaction spending a currently active channel is a splice and
+not a closing transaction, and this channel can still be used with its updated
+`short_channel_id`.
 
 ## The `channel_announcement` Message
 
@@ -162,9 +174,18 @@ The origin node:
   that the channel was opened within:
     - for the _Bitcoin blockchain_:
       - MUST set `chain_hash` value (encoded in hex) equal to `6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000`.
-  - MUST set `short_channel_id` to refer to the confirmed funding transaction,
-  as specified in [BOLT #2](02-peer-protocol.md#the-channel_ready-message).
-    - Note: the corresponding output MUST be a P2WSH, as described in [BOLT #3](03-transactions.md#funding-transaction-output).
+  - When announcing a channel creation:
+    - MUST set `short_channel_id` to refer to the confirmed funding transaction,
+      as specified in [BOLT #2](02-peer-protocol.md#the-channel_ready-message).
+  - When announcing a splice transaction:
+    - MUST set `short_channel_id` to refer to the confirmed splice transaction
+      for which `splice_locked` has been sent and received, as specified in
+      [BOLT #2](02-peer-protocol.md#the-splice_locked-message).
+    - SHOULD keep relaying payments that use the `short_channel_id`s of its
+      previous `channel_announcement`s.
+    - SHOULD send a new `channel_update` using the `short_channel_id` that
+      matches the latest `channel_announcement`.
+  - Note: the corresponding output MUST be a P2WSH, as described in [BOLT #3](03-transactions.md#funding-transaction-output).
   - MUST set `node_id_1` and `node_id_2` to the public keys of the two nodes
   operating the channel, such that `node_id_1` is the lexicographically-lesser of the
   two compressed keys sorted in ascending lexicographic order.
@@ -189,6 +210,10 @@ The origin node:
 The receiving node:
   - MUST verify the integrity AND authenticity of the message by verifying the
   signatures.
+  - if `node_id_1` is not lexicographically less than `node_id_2`:
+    - SHOULD send a `warning`.
+    - MAY close the connection.
+    - MUST ignore the message.
   - if there is an unknown even bit in the `features` field:
     - MUST NOT attempt to route messages through the channel.
   - if the `short_channel_id`'s output does NOT correspond to a P2WSH (using
@@ -253,9 +278,11 @@ optional) features will have _odd_ feature bits, while incompatible features
 will have _even_ feature bits
 (["It's OK to be odd!"](00-introduction.md#glossary-and-terminology-guide)).
 
-A delay of 72 blocks is used when forgetting a channel on funding output spend
-as to permit a new `channel_announcement` to propagate which indicates this
-channel was spliced.
+A delay of 72 blocks is used when forgetting a channel after detecting that it
+has been spent: this can allow a new `channel_announcement` to propagate to
+indicate that this channel was spliced and not closed. Thanks to this delay,
+payments can still be relayed on the channel while the splice transaction is
+waiting for enough confirmations.
 
 ## The `node_announcement` Message
 
@@ -319,8 +346,7 @@ The origin node:
   - MUST place address descriptors in ascending order.
   - SHOULD NOT place any zero-typed address descriptors anywhere.
   - SHOULD use placement only for aligning fields that follow `addresses`.
-  - MUST NOT create a `type 1`, `type 2` or `type 5` address descriptor with
-  `port` equal to 0.
+  - MUST NOT create an address descriptor with `port` equal to 0.
   - SHOULD ensure `ipv4_addr` AND `ipv6_addr` are routable addresses.
   - MUST set `features` according to [BOLT #9](09-features.md#assigned-features-flags)
   - SHOULD set `flen` to the minimum length required to hold the `features`
@@ -351,7 +377,7 @@ any future fields appended to the end):
     - SHOULD send a `warning`.
     - MAY close the connection.
   - if `port` is equal to 0:
-    - SHOULD ignore `ipv6_addr` OR `ipv4_addr` OR `hostname`.
+    - SHOULD ignore that address descriptor.
   - if `node_id` is NOT previously known from a `channel_announcement` message,
   OR if `timestamp` is NOT greater than the last-received `node_announcement`
   from this `node_id`:
@@ -819,7 +845,7 @@ The receiver of `query_channel_range`:
     - MUST set `sync_complete` to `false` if this is not the final `reply_channel_range`.
     - the final `reply_channel_range` message:
       - MUST have `first_blocknum` plus `number_of_blocks` equal or greater than the `query_channel_range` `first_blocknum` plus `number_of_blocks`.
-    - MUST set `sync_complete` to `true`.
+      - MUST set `sync_complete` to `true`.
 
 If the incoming message includes `query_option`, the receiver MAY append additional information to its reply:
 - if bit 0 in `query_option_flags` is set, the receiver MAY append a `timestamps_tlv` that contains `channel_update` timestamps for all `short_channel_id`s in `encoded_short_ids`

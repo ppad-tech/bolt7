@@ -6,105 +6,132 @@
 -- License: MIT
 -- Maintainer: Jared Tobin <jared@ppad.tech>
 --
--- Routing gossip protocol for the Lightning Network, per
--- [BOLT #7](https://github.com/lightning/bolts/blob/master/07-routing-gossip.md).
+-- Routing gossip for the Lightning Network, per
+-- [BOLT #7](https://github.com/lightning/bolts/blob/master/07-routing-gossip.md):
+-- the gossip messages and queries, their signature digests and
+-- checksums, signature verification, and stateless validation.
 --
--- = Overview
+-- Fundamental types (chain hashes, points, signatures, short channel
+-- ids, amounts, TLV streams) come from ppad-bolt1, and feature vectors
+-- from ppad-bolt9.
 --
--- This module provides types, encoding\/decoding, and validation for
--- BOLT #7 routing gossip messages. The protocol enables nodes to
--- share channel and node information across the network.
---
--- = Usage
---
--- Import this module to access all BOLT #7 functionality:
---
--- @
--- import Lightning.Protocol.BOLT7
--- @
---
--- == Decoding messages
---
--- @
--- -- Decode a channel_announcement from wire format
--- case decodeChannelAnnouncement wireBytes of
---   Left err -> handleError err
---   Right (msg, rest) -> processAnnouncement msg
--- @
---
--- == Encoding messages
---
--- @
--- -- Encode a gossip_timestamp_filter
--- let msg = GossipTimestampFilter
---       { gossipFilterChainHash      = mainnetChainHash
---       , gossipFilterFirstTimestamp = 1609459200
---       , gossipFilterTimestampRange = 86400
---       }
--- let wireBytes = encodeGossipTimestampFilter msg
--- @
---
--- == Validation
---
--- @
--- -- Validate a channel_announcement before processing
--- case validateChannelAnnouncement announcement of
---   Left ValidateNodeIdOrdering -> rejectMessage
---   Right () -> processValidMessage
--- @
---
--- == Signature verification
---
--- This library provides hash computation for signature verification.
--- The hash functions take the received payload (the bytes after the
--- 2-byte message type):
---
--- @
--- -- Compute the hash that should be signed
--- case channelAnnouncementHash payload of
---   Nothing -> rejectMessage  -- too short to be a channel_announcement
---   Just sigHash -> verifyWith sigHash  -- e.g. using ppad-secp256k1
--- @
---
--- = Protocol overview
---
--- BOLT #7 defines gossip messages for routing in the Lightning Network.
--- Nodes use these messages to build a view of the channel graph.
+-- Decoders take a message payload, without its 2-byte type, and consume
+-- all of it. Every byte is kept, including unassigned flag bits,
+-- unknown address descriptors and unknown odd TLV records, so encoding
+-- a decoded message reproduces its payload exactly and its signatures
+-- still verify.
 
 module Lightning.Protocol.BOLT7 (
-  -- * Core types
-  -- | Re-exported from "Lightning.Protocol.BOLT7.Types".
-    module Lightning.Protocol.BOLT7.Types
+  -- * Messages
+    Message(..)
+  , message_type
+  , ChannelAnnouncement(..)
+  , NodeAnnouncement(..)
+  , ChannelUpdate(..)
+  , AnnouncementSignatures(..)
+  , QueryShortChannelIds(..)
+  , ReplyShortChannelIdsEnd(..)
+  , QueryChannelRange(..)
+  , ReplyChannelRange(..)
+  , GossipTimestampFilter(..)
 
-  -- * Message types
-  -- | Re-exported from "Lightning.Protocol.BOLT7.Messages".
-  , module Lightning.Protocol.BOLT7.Messages
+  -- * Encoding and decoding
+  , encode_message
+  , decode_message
+  , EncodeError(..)
+  , DecodeError(..)
 
-  -- * Codec functions
-  -- | Re-exported from "Lightning.Protocol.BOLT7.Codec".
-  , module Lightning.Protocol.BOLT7.Codec
+  -- ** Payloads
+  , encode_channel_announcement
+  , decode_channel_announcement
+  , encode_node_announcement
+  , decode_node_announcement
+  , encode_channel_update
+  , decode_channel_update
+  , encode_announcement_signatures
+  , decode_announcement_signatures
+  , encode_query_short_channel_ids
+  , decode_query_short_channel_ids
+  , encode_reply_short_channel_ids_end
+  , decode_reply_short_channel_ids_end
+  , encode_query_channel_range
+  , decode_query_channel_range
+  , encode_reply_channel_range
+  , decode_reply_channel_range
+  , encode_gossip_timestamp_filter
+  , decode_gossip_timestamp_filter
 
-  -- * Hash functions
-  -- | Re-exported from "Lightning.Protocol.BOLT7.Hash".
-  , module Lightning.Protocol.BOLT7.Hash
+  -- * Signatures and checksums
+  , channel_announcement_hash
+  , node_announcement_hash
+  , channel_update_hash
+  , verify_channel_announcement
+  , verify_node_announcement
+  , verify_channel_update
+  , channel_update_checksum
 
-  -- * Validation functions
-  -- | Re-exported from "Lightning.Protocol.BOLT7.Validate".
-  , module Lightning.Protocol.BOLT7.Validate
+  -- * Validation
+  , ValidationError(..)
+  , validate_channel_announcement
+  , validate_node_announcement
+  , validate_channel_update
+  , validate_query_short_channel_ids
+  , validate_query_channel_range
+  , validate_reply_channel_range
 
-  -- $messagetypes
+  -- * channel_update flags
+  , MessageFlags(..)
+  , Forwarding(..)
+  , message_flags
+  , message_flags_forwarding
+  , has_must_be_one
+  , ChannelFlags(..)
+  , Direction(..)
+  , ChannelStatus(..)
+  , channel_flags
+  , channel_flags_direction
+  , channel_flags_status
 
-  -- ** Channel announcement
-  -- $announcement
+  -- * node_announcement fields
+  , RgbColor(..)
+  , Alias
+  , alias
+  , un_alias
 
-  -- ** Node announcement
-  -- $nodeannouncement
+  -- ** Addresses
+  , Address(..)
+  , usable_addresses
+  , IPv4Addr
+  , ipv4_addr
+  , un_ipv4_addr
+  , IPv6Addr
+  , ipv6_addr
+  , un_ipv6_addr
+  , TorV2Addr
+  , tor_v2_addr
+  , un_tor_v2_addr
+  , TorV3Addr
+  , tor_v3_addr
+  , un_tor_v3_addr
+  , Hostname
+  , hostname
+  , un_hostname
+  , is_ascii_hostname
 
-  -- ** Channel updates
-  -- $updates
+  -- * Query fields
+  , QueryFlags(..)
+  , QueryFlag(..)
+  , query_flags
+  , has_query_flag
+  , QueryOption(..)
+  , QueryOptionFlag(..)
+  , query_option
+  , has_query_option
+  , ChannelUpdateTimestamps(..)
+  , ChannelUpdateChecksums(..)
 
-  -- ** Gossip queries
-  -- $queries
+  -- * Short channel ids
+  , format_short_channel_id
   ) where
 
 import Lightning.Protocol.BOLT7.Codec
@@ -112,46 +139,3 @@ import Lightning.Protocol.BOLT7.Hash
 import Lightning.Protocol.BOLT7.Messages
 import Lightning.Protocol.BOLT7.Types
 import Lightning.Protocol.BOLT7.Validate
-
--- $messagetypes
---
--- BOLT #7 defines the following message types:
---
--- * 256: channel_announcement
--- * 257: node_announcement
--- * 258: channel_update
--- * 259: announcement_signatures
--- * 261: query_short_channel_ids
--- * 262: reply_short_channel_ids_end
--- * 263: query_channel_range
--- * 264: reply_channel_range
--- * 265: gossip_timestamp_filter
-
--- $announcement
---
--- Channel announcement messages:
---
--- * channel_announcement (256) - public channel announcement
--- * announcement_signatures (259) - signatures enabling announcement
-
--- $nodeannouncement
---
--- Node announcement message:
---
--- * node_announcement (257) - advertises node metadata
-
--- $updates
---
--- Channel update message:
---
--- * channel_update (258) - per-direction routing parameters
-
--- $queries
---
--- Gossip query messages:
---
--- * query_short_channel_ids (261) - request specific channel info
--- * reply_short_channel_ids_end (262) - concludes query response
--- * query_channel_range (263) - query channels in block range
--- * reply_channel_range (264) - response with channel IDs
--- * gossip_timestamp_filter (265) - constrain relayed gossip

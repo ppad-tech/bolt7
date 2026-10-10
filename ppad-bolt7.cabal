@@ -1,6 +1,6 @@
 cabal-version:      3.0
 name:               ppad-bolt7
-version:            0.0.1
+version:            0.1.0
 synopsis:           Routing gossip per BOLT #7
 license:            MIT
 license-file:       LICENSE
@@ -8,10 +8,10 @@ author:             Jared Tobin
 maintainer:         jared@ppad.tech
 category:           Cryptography
 build-type:         Simple
-tested-with:        GHC == 9.10.3
+tested-with:        GHC == { 9.10.3 }
 extra-doc-files:    CHANGELOG
 description:
-  Routing gossip protocol, per
+  Routing gossip, per
   [BOLT #7](https://github.com/lightning/bolts/blob/master/07-routing-gossip.md).
 
 source-repository head
@@ -25,6 +25,7 @@ library
       -Wall
   exposed-modules:
       Lightning.Protocol.BOLT7
+  other-modules:
       Lightning.Protocol.BOLT7.Codec
       Lightning.Protocol.BOLT7.CRC32C
       Lightning.Protocol.BOLT7.Hash
@@ -35,25 +36,31 @@ library
       base >= 4.9 && < 5
     , bytestring >= 0.9 && < 0.13
     , deepseq >= 1.4 && < 1.6
-    , ppad-bolt1 >= 0.0.1 && < 0.1
-    , ppad-sha256 >= 0.3 && < 0.4
+    , ppad-bolt1 >= 0.1 && < 0.2
+    , ppad-bolt9 >= 0.1 && < 0.2
+    , ppad-secp256k1 >= 0.5.8 && < 0.6
+    , ppad-sha256 >= 0.3.2 && < 0.4
 
 test-suite bolt7-tests
   type:                exitcode-stdio-1.0
   default-language:    Haskell2010
   hs-source-dirs:      test
   main-is:             Main.hs
+  other-modules:
+      Vectors
 
   ghc-options:
-    -rtsopts -Wall -O2
+    -rtsopts -Wall
 
   build-depends:
       base
     , bytestring
     , ppad-base16
-    , ppad-bolt1 >= 0.0.1 && < 0.1
+    , ppad-bolt1
     , ppad-bolt7
-    , ppad-secp256k1 >= 0.5.5 && < 0.6
+    , ppad-bolt9
+    , ppad-secp256k1
+    , ppad-sha256
     , tasty
     , tasty-hunit
     , tasty-quickcheck
@@ -63,16 +70,18 @@ benchmark bolt7-bench
   default-language:    Haskell2010
   hs-source-dirs:      bench
   main-is:             Main.hs
+  other-modules:
+      Fixtures
 
   ghc-options:
-    -rtsopts -O2 -Wall -fno-warn-orphans
+    -rtsopts -O2 -Wall
 
   build-depends:
       base
     , bytestring
     , criterion
-    , deepseq
-    , ppad-bolt1 >= 0.0.1 && < 0.1
+    , ppad-base16
+    , ppad-bolt1
     , ppad-bolt7
 
 benchmark bolt7-weigh
@@ -80,14 +89,16 @@ benchmark bolt7-weigh
   default-language:    Haskell2010
   hs-source-dirs:      bench
   main-is:             Weight.hs
+  other-modules:
+      Fixtures
 
   ghc-options:
-    -rtsopts -O2 -Wall -fno-warn-orphans
+    -rtsopts -O2 -Wall
 
   build-depends:
       base
     , bytestring
-    , deepseq
-    , ppad-bolt1 >= 0.0.1 && < 0.1
+    , ppad-base16
+    , ppad-bolt1
     , ppad-bolt7
     , weigh

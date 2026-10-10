@@ -1,5 +1,4 @@
-{-# OPTIONS_HADDOCK prune #-}
-
+{-# OPTIONS_HADDOCK hide #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveGeneric #-}
 
@@ -9,467 +8,453 @@
 -- License: MIT
 -- Maintainer: Jared Tobin <jared@ppad.tech>
 --
--- Core types for BOLT #7 routing gossip.
+-- Field types for BOLT #7 gossip messages.
 
 module Lightning.Protocol.BOLT7.Types (
-  -- * Identifiers (re-exported from BOLT1)
-    ChainHash(..)
-  , chainHash
-  , unChainHash
-  , mainnetChainHash
-  , ShortChannelId(..)
-  , shortChannelId
-  , scidBlockHeight
-  , scidTxIndex
-  , scidOutputIndex
-  , scidWord64
-  , scidFromBytes
-  , scidToBytes
-  , formatScid
-  , ChannelId(..)
-  , channelId
-  , unChannelId
+  -- * Short channel ids
+    format_short_channel_id
 
-  -- * Cryptographic types (re-exported from BOLT1)
-  , Signature(..)
-  , signature
-  , unSignature
-  , Point(..)
-  , point
-  , unPoint
-  , NodeId
-  , nodeId
-  , getNodeId
-
-  -- * Node metadata
-  , RgbColor
-  , rgbColor
-  , getRgbColor
-  , Alias
-  , alias
-  , getAlias
-  , Timestamp
-  , FeatureBits
-  , featureBits
-  , getFeatureBits
-
-  -- * Address types
-  , Address(..)
-  , IPv4Addr
-  , ipv4Addr
-  , getIPv4Addr
-  , IPv6Addr
-  , ipv6Addr
-  , getIPv6Addr
-  , TorV3Addr
-  , torV3Addr
-  , getTorV3Addr
-  , Hostname
-  , hostname
-  , getHostname
-
-  -- * Channel update flags
+  -- * channel_update flags
+  , MessageFlags(..)
+  , Forwarding(..)
+  , message_flags
+  , message_flags_forwarding
+  , has_must_be_one
+  , ChannelFlags(..)
   , Direction(..)
   , ChannelStatus(..)
-  , ChannelFlags(..)
-  , encodeChannelFlags
-  , decodeChannelFlags
+  , channel_flags
+  , channel_flags_direction
+  , channel_flags_status
 
-  -- * Routing parameters
-  , CltvExpiryDelta(..)
-  , FeeBaseMsat(..)
-  , FeeProportionalMillionths(..)
-  , HtlcMinimumMsat(..)
-  , HtlcMaximumMsat(..)
+  -- * node_announcement fields
+  , RgbColor(..)
+  , Alias(..)
+  , alias
+  , un_alias
+  , Address(..)
+  , IPv4Addr(..)
+  , ipv4_addr
+  , un_ipv4_addr
+  , IPv6Addr(..)
+  , ipv6_addr
+  , un_ipv6_addr
+  , TorV2Addr(..)
+  , tor_v2_addr
+  , un_tor_v2_addr
+  , TorV3Addr(..)
+  , tor_v3_addr
+  , un_tor_v3_addr
+  , Hostname(..)
+  , hostname
+  , un_hostname
+  , is_ascii_hostname
+  , usable_addresses
 
-  -- * Block range types
-  , BlockHeight(..)
-  , BlockCount(..)
-
-  -- * Constants
-  , chainHashLen
-  , shortChannelIdLen
-  , channelIdLen
-  , signatureLen
-  , pointLen
-  , nodeIdLen
-  , rgbColorLen
-  , aliasLen
-  , ipv4AddrLen
-  , ipv6AddrLen
-  , torV3AddrLen
+  -- * Query fields
+  , QueryFlags(..)
+  , QueryFlag(..)
+  , query_flags
+  , has_query_flag
+  , QueryOption(..)
+  , QueryOptionFlag(..)
+  , query_option
+  , has_query_option
+  , ChannelUpdateTimestamps(..)
+  , ChannelUpdateChecksums(..)
   ) where
 
 import Control.DeepSeq (NFData)
-import Data.Bits (shiftL, shiftR, (.&.), (.|.))
-import Data.ByteString (ByteString)
+import Data.Bits ((.|.), bit, testBit)
 import qualified Data.ByteString as BS
 import Data.Word (Word8, Word16, Word32, Word64)
 import GHC.Generics (Generic)
-import Lightning.Protocol.BOLT1.Prim
-  ( ChainHash(..), unChainHash, chainHash
-  , ShortChannelId(..), shortChannelId
-  , scidBlockHeight, scidTxIndex, scidOutputIndex, scidWord64
-  , ChannelId(..), unChannelId, channelId
-  , Signature(..), unSignature, signature
-  , Point(..), unPoint, point
-  )
+import Lightning.Protocol.BOLT1
+  (ShortChannelId, scid_block_height, scid_tx_index, scid_output_index)
 
--- Constants -------------------------------------------------------------------
+-- short channel ids ----------------------------------------------------------
 
--- | Length of a chain hash (32 bytes).
-chainHashLen :: Int
-chainHashLen = 32
-{-# INLINE chainHashLen #-}
-
--- | Length of a short channel ID (8 bytes).
-shortChannelIdLen :: Int
-shortChannelIdLen = 8
-{-# INLINE shortChannelIdLen #-}
-
--- | Length of a channel ID (32 bytes).
-channelIdLen :: Int
-channelIdLen = 32
-{-# INLINE channelIdLen #-}
-
--- | Length of a signature (64 bytes).
-signatureLen :: Int
-signatureLen = 64
-{-# INLINE signatureLen #-}
-
--- | Length of a compressed public key (33 bytes).
-pointLen :: Int
-pointLen = 33
-{-# INLINE pointLen #-}
-
--- | Length of a node ID (33 bytes, same as compressed public key).
-nodeIdLen :: Int
-nodeIdLen = 33
-{-# INLINE nodeIdLen #-}
-
--- | Length of RGB color (3 bytes).
-rgbColorLen :: Int
-rgbColorLen = 3
-{-# INLINE rgbColorLen #-}
-
--- | Length of node alias (32 bytes).
-aliasLen :: Int
-aliasLen = 32
-{-# INLINE aliasLen #-}
-
--- | Length of IPv4 address (4 bytes).
-ipv4AddrLen :: Int
-ipv4AddrLen = 4
-{-# INLINE ipv4AddrLen #-}
-
--- | Length of IPv6 address (16 bytes).
-ipv6AddrLen :: Int
-ipv6AddrLen = 16
-{-# INLINE ipv6AddrLen #-}
-
--- | Length of Tor v3 address (35 bytes).
-torV3AddrLen :: Int
-torV3AddrLen = 35
-{-# INLINE torV3AddrLen #-}
-
--- Identifiers -----------------------------------------------------------------
-
--- | Bitcoin mainnet chain hash (genesis block hash, little-endian).
-mainnetChainHash :: ChainHash
-mainnetChainHash = ChainHash $ BS.pack
-  [ 0x6f, 0xe2, 0x8c, 0x0a, 0xb6, 0xf1, 0xb3, 0x72
-  , 0xc1, 0xa6, 0xa2, 0x46, 0xae, 0x63, 0xf7, 0x4f
-  , 0x93, 0x1e, 0x83, 0x65, 0xe1, 0x5a, 0x08, 0x9c
-  , 0x68, 0xd6, 0x19, 0x00, 0x00, 0x00, 0x00, 0x00
-  ]
-
--- | Parse ShortChannelId from 8 big-endian bytes.
-scidFromBytes :: ByteString -> Maybe ShortChannelId
-scidFromBytes !bs
-  | BS.length bs /= shortChannelIdLen = Nothing
-  | otherwise =
-      let !w = (fromIntegral (BS.index bs 0) `shiftL` 56)
-           .|. (fromIntegral (BS.index bs 1) `shiftL` 48)
-           .|. (fromIntegral (BS.index bs 2) `shiftL` 40)
-           .|. (fromIntegral (BS.index bs 3) `shiftL` 32)
-           .|. (fromIntegral (BS.index bs 4) `shiftL` 24)
-           .|. (fromIntegral (BS.index bs 5) `shiftL` 16)
-           .|. (fromIntegral (BS.index bs 6) `shiftL` 8)
-           .|.  fromIntegral (BS.index bs 7) :: Word64
-      in  Just (ShortChannelId w)
-{-# INLINE scidFromBytes #-}
-
--- | Encode ShortChannelId as 8 big-endian bytes.
-scidToBytes :: ShortChannelId -> ByteString
-scidToBytes !sci =
-  let !w = scidWord64 sci
-  in  BS.pack
-        [ fromIntegral (w `shiftR` 56)
-        , fromIntegral (w `shiftR` 48)
-        , fromIntegral (w `shiftR` 40)
-        , fromIntegral (w `shiftR` 32)
-        , fromIntegral (w `shiftR` 24)
-        , fromIntegral (w `shiftR` 16)
-        , fromIntegral (w `shiftR` 8)
-        , fromIntegral w
-        ]
-{-# INLINE scidToBytes #-}
-
--- | Format short channel ID as human-readable string.
-formatScid :: ShortChannelId -> String
-formatScid sci =
-  show (scidBlockHeight sci) ++ "x" ++
-  show (scidTxIndex sci) ++ "x" ++
-  show (scidOutputIndex sci)
-{-# INLINE formatScid #-}
-
--- Cryptographic types ---------------------------------------------------------
-
--- | Node ID (33 bytes, same as compressed public key).
+-- | Render a short channel id in the human-readable format of BOLT #7:
+--   block height, transaction index and output index, in decimal,
+--   separated by @x@.
 --
--- Has Ord instance for lexicographic comparison (required by spec for
--- channel announcements where node_id_1 < node_id_2).
-newtype NodeId = NodeId { getNodeId :: ByteString }
+--   >>> fmap format_short_channel_id (short_channel_id 539268 845 1)
+--   Just "539268x845x1"
+format_short_channel_id :: ShortChannelId -> String
+format_short_channel_id s =
+  show (scid_block_height s) ++ "x" ++ show (scid_tx_index s) ++ "x"
+    ++ show (scid_output_index s)
+
+-- channel_update flags -------------------------------------------------------
+
+-- | The @message_flags@ byte of a @channel_update@: bit 0 is
+--   @must_be_one@, bit 1 is @dont_forward@, and the other bits are
+--   unassigned. Every byte is a valid value; unassigned bits are kept so
+--   that re-encoding reproduces the signed bytes.
+newtype MessageFlags = MessageFlags Word8
+  deriving (Eq, Show, Generic)
+
+instance NFData MessageFlags
+
+-- | Whether a @channel_update@ may be relayed to other peers (the
+--   @dont_forward@ bit).
+data Forwarding
+  = Forward      -- ^ @dont_forward@ is 0
+  | DontForward  -- ^ @dont_forward@ is 1, as for unannounced channels
   deriving (Eq, Ord, Show, Generic)
 
-instance NFData NodeId
+instance NFData Forwarding
 
--- | Smart constructor for NodeId. Returns Nothing if not 33 bytes.
-nodeId :: ByteString -> Maybe NodeId
-nodeId !bs
-  | BS.length bs == nodeIdLen = Just (NodeId bs)
-  | otherwise = Nothing
-{-# INLINE nodeId #-}
-
--- Node metadata ---------------------------------------------------------------
-
--- | RGB color (3 bytes).
-newtype RgbColor = RgbColor { getRgbColor :: ByteString }
-  deriving (Eq, Show, Generic)
-
-instance NFData RgbColor
-
--- | Smart constructor for RgbColor. Returns Nothing if not 3 bytes.
-rgbColor :: ByteString -> Maybe RgbColor
-rgbColor !bs
-  | BS.length bs == rgbColorLen = Just (RgbColor bs)
-  | otherwise = Nothing
-{-# INLINE rgbColor #-}
-
--- | Node alias (32 bytes, UTF-8 padded with zero bytes).
-newtype Alias = Alias { getAlias :: ByteString }
-  deriving (Eq, Show, Generic)
-
-instance NFData Alias
-
--- | Smart constructor for Alias. Returns Nothing if not 32 bytes.
-alias :: ByteString -> Maybe Alias
-alias !bs
-  | BS.length bs == aliasLen = Just (Alias bs)
-  | otherwise = Nothing
-{-# INLINE alias #-}
-
--- | Timestamp (Unix epoch seconds).
-type Timestamp = Word32
-
--- | Feature bits (variable length).
-newtype FeatureBits = FeatureBits { getFeatureBits :: ByteString }
-  deriving (Eq, Show, Generic)
-
-instance NFData FeatureBits
-
--- | Smart constructor for FeatureBits (any length).
-featureBits :: ByteString -> FeatureBits
-featureBits = FeatureBits
-{-# INLINE featureBits #-}
-
--- Address types ---------------------------------------------------------------
-
--- | IPv4 address (4 bytes).
-newtype IPv4Addr = IPv4Addr { getIPv4Addr :: ByteString }
-  deriving (Eq, Show, Generic)
-
-instance NFData IPv4Addr
-
--- | Smart constructor for IPv4Addr. Returns Nothing if not 4 bytes.
-ipv4Addr :: ByteString -> Maybe IPv4Addr
-ipv4Addr !bs
-  | BS.length bs == ipv4AddrLen = Just (IPv4Addr bs)
-  | otherwise = Nothing
-{-# INLINE ipv4Addr #-}
-
--- | IPv6 address (16 bytes).
-newtype IPv6Addr = IPv6Addr { getIPv6Addr :: ByteString }
-  deriving (Eq, Show, Generic)
-
-instance NFData IPv6Addr
-
--- | Smart constructor for IPv6Addr. Returns Nothing if not 16 bytes.
-ipv6Addr :: ByteString -> Maybe IPv6Addr
-ipv6Addr !bs
-  | BS.length bs == ipv6AddrLen = Just (IPv6Addr bs)
-  | otherwise = Nothing
-{-# INLINE ipv6Addr #-}
-
--- | Tor v3 onion address (35 bytes: 32 pubkey + 2 checksum + 1 version).
-newtype TorV3Addr = TorV3Addr { getTorV3Addr :: ByteString }
-  deriving (Eq, Show, Generic)
-
-instance NFData TorV3Addr
-
--- | Smart constructor for TorV3Addr. Returns Nothing if not 35 bytes.
-torV3Addr :: ByteString -> Maybe TorV3Addr
-torV3Addr !bs
-  | BS.length bs == torV3AddrLen = Just (TorV3Addr bs)
-  | otherwise = Nothing
-{-# INLINE torV3Addr #-}
-
--- | DNS hostname (1-255 ASCII bytes).
+-- | The t'MessageFlags' an origin node sets: @must_be_one@ set, the given
+--   @dont_forward@ bit, and no unassigned bits.
 --
--- Per BOLT #7 address descriptor type 5, the hostname is
--- a length-prefixed DNS name whose bytes MUST be ASCII
--- (non-ASCII names are Punycode-encoded). The length byte
--- limits it to 255 bytes.
-newtype Hostname = Hostname { getHostname :: ByteString }
-  deriving (Eq, Show, Generic)
+--   >>> message_flags DontForward
+--   MessageFlags 3
+message_flags :: Forwarding -> MessageFlags
+message_flags Forward     = MessageFlags 0x01
+message_flags DontForward = MessageFlags 0x03
+{-# INLINE message_flags #-}
 
-instance NFData Hostname
-
--- | Smart constructor for Hostname.
+-- | The @dont_forward@ bit of t'MessageFlags'.
 --
--- Returns Nothing if the hostname is empty, exceeds 255
--- bytes, or contains a non-ASCII byte.
-hostname :: ByteString -> Maybe Hostname
-hostname !bs
-  | BS.null bs = Nothing
-  | BS.length bs > 255 = Nothing
-  | BS.any (> 0x7f) bs = Nothing
-  | otherwise = Just (Hostname bs)
-{-# INLINE hostname #-}
+--   >>> message_flags_forwarding (MessageFlags 0x01)
+--   Forward
+message_flags_forwarding :: MessageFlags -> Forwarding
+message_flags_forwarding (MessageFlags w)
+  | testBit w 1 = DontForward
+  | otherwise   = Forward
+{-# INLINE message_flags_forwarding #-}
 
--- | Network address with port.
-data Address
-  = AddrIPv4  !IPv4Addr  !Word16  -- ^ IPv4 address + port
-  | AddrIPv6  !IPv6Addr  !Word16  -- ^ IPv6 address + port
-  | AddrTorV3 !TorV3Addr !Word16  -- ^ Tor v3 address + port
-  | AddrDNS   !Hostname  !Word16  -- ^ DNS hostname + port
-  deriving (Eq, Show, Generic)
-
-instance NFData Address
-
--- Channel update flags --------------------------------------------------------
-
--- | Direction of a channel_update.
+-- | Whether the @must_be_one@ bit is set. Senders must set it; receivers
+--   ignore it.
 --
--- Per BOLT #7, bit 0 of channel_flags indicates which node
--- is the origin of the update.
-data Direction
-  = NodeOne  -- ^ Update from node_id_1 (bit 0 = 0)
-  | NodeTwo  -- ^ Update from node_id_2 (bit 0 = 1)
-  deriving (Eq, Ord, Show, Generic)
+--   >>> has_must_be_one (MessageFlags 0x00)
+--   False
+has_must_be_one :: MessageFlags -> Bool
+has_must_be_one (MessageFlags w) = testBit w 0
+{-# INLINE has_must_be_one #-}
 
-instance NFData Direction
-
--- | Channel enabled\/disabled status.
---
--- Per BOLT #7, bit 1 of channel_flags indicates whether
--- the channel is disabled.
-data ChannelStatus
-  = Enabled   -- ^ Channel is active (bit 1 = 0)
-  | Disabled  -- ^ Channel is disabled (bit 1 = 1)
-  deriving (Eq, Ord, Show, Generic)
-
-instance NFData ChannelStatus
-
--- | Channel flags for channel_update.
---
--- Bit 0: direction (0 = node_id_1, 1 = node_id_2).
--- Bit 1: disabled (0 = enabled, 1 = disabled).
-data ChannelFlags = ChannelFlags
-  { cfDirection :: !Direction      -- ^ Update origin
-  , cfStatus    :: !ChannelStatus  -- ^ Channel status
-  }
+-- | The @channel_flags@ byte of a @channel_update@: bit 0 is
+--   @direction@, bit 1 is @disable@, and the other bits are unassigned.
+--   Every byte is a valid value; unassigned bits are kept so that
+--   re-encoding reproduces the signed bytes.
+newtype ChannelFlags = ChannelFlags Word8
   deriving (Eq, Show, Generic)
 
 instance NFData ChannelFlags
 
--- | Encode ChannelFlags to Word8.
-encodeChannelFlags :: ChannelFlags -> Word8
-encodeChannelFlags cf =
-  dir .|. sta
+-- | The node a @channel_update@ originates from.
+data Direction
+  = NodeOne  -- ^ @node_id_1@ (@direction@ is 0)
+  | NodeTwo  -- ^ @node_id_2@ (@direction@ is 1)
+  deriving (Eq, Ord, Show, Generic)
+
+instance NFData Direction
+
+-- | Whether a channel direction is usable.
+data ChannelStatus
+  = Enabled   -- ^ @disable@ is 0
+  | Disabled  -- ^ @disable@ is 1
+  deriving (Eq, Ord, Show, Generic)
+
+instance NFData ChannelStatus
+
+-- | The t'ChannelFlags' for the given direction and status, with no
+--   unassigned bits set.
+--
+--   >>> channel_flags NodeTwo Disabled
+--   ChannelFlags 3
+channel_flags :: Direction -> ChannelStatus -> ChannelFlags
+channel_flags d s = ChannelFlags (dir .|. sta)
   where
-    dir = case cfDirection cf of
+    dir = case d of
       NodeOne -> 0x00
       NodeTwo -> 0x01
-    sta = case cfStatus cf of
+    sta = case s of
       Enabled  -> 0x00
       Disabled -> 0x02
-{-# INLINE encodeChannelFlags #-}
+{-# INLINE channel_flags #-}
 
--- | Decode Word8 to ChannelFlags.
-decodeChannelFlags :: Word8 -> ChannelFlags
-decodeChannelFlags w = ChannelFlags
-  { cfDirection = if w .&. 0x01 /= 0
-      then NodeTwo
-      else NodeOne
-  , cfStatus = if w .&. 0x02 /= 0
-      then Disabled
-      else Enabled
-  }
-{-# INLINE decodeChannelFlags #-}
-
--- Routing parameters ----------------------------------------------------------
-
--- | CLTV expiry delta.
-newtype CltvExpiryDelta = CltvExpiryDelta { getCltvExpiryDelta :: Word16 }
-  deriving (Eq, Ord, Show, Generic)
-
-instance NFData CltvExpiryDelta
-
--- | Base fee in millisatoshis.
-newtype FeeBaseMsat = FeeBaseMsat { getFeeBaseMsat :: Word32 }
-  deriving (Eq, Ord, Show, Generic)
-
-instance NFData FeeBaseMsat
-
--- | Proportional fee in millionths.
-newtype FeeProportionalMillionths = FeeProportionalMillionths
-  { getFeeProportionalMillionths :: Word32 }
-  deriving (Eq, Ord, Show, Generic)
-
-instance NFData FeeProportionalMillionths
-
--- | Minimum HTLC value in millisatoshis.
-newtype HtlcMinimumMsat = HtlcMinimumMsat { getHtlcMinimumMsat :: Word64 }
-  deriving (Eq, Ord, Show, Generic)
-
-instance NFData HtlcMinimumMsat
-
--- | Maximum HTLC value in millisatoshis.
-newtype HtlcMaximumMsat = HtlcMaximumMsat
-  { getHtlcMaximumMsat :: Word64 }
-  deriving (Eq, Ord, Show, Generic)
-
-instance NFData HtlcMaximumMsat
-
--- Block range types -----------------------------------------------------------
-
--- | Absolute block height.
+-- | The @direction@ bit of t'ChannelFlags'.
 --
--- Used in query_channel_range and reply_channel_range for
--- the first_blocknum field.
-newtype BlockHeight = BlockHeight
-  { getBlockHeight :: Word32 }
-  deriving (Eq, Ord, Show, Generic)
+--   >>> channel_flags_direction (ChannelFlags 0x05)
+--   NodeTwo
+channel_flags_direction :: ChannelFlags -> Direction
+channel_flags_direction (ChannelFlags w)
+  | testBit w 0 = NodeTwo
+  | otherwise   = NodeOne
+{-# INLINE channel_flags_direction #-}
 
-instance NFData BlockHeight
-
--- | Block count (relative duration).
+-- | The @disable@ bit of t'ChannelFlags'.
 --
--- Used in query_channel_range and reply_channel_range for
--- the number_of_blocks field.
-newtype BlockCount = BlockCount
-  { getBlockCount :: Word32 }
-  deriving (Eq, Ord, Show, Generic)
+--   >>> channel_flags_status (ChannelFlags 0x02)
+--   Disabled
+channel_flags_status :: ChannelFlags -> ChannelStatus
+channel_flags_status (ChannelFlags w)
+  | testBit w 1 = Disabled
+  | otherwise   = Enabled
+{-# INLINE channel_flags_status #-}
 
-instance NFData BlockCount
+-- node_announcement fields ---------------------------------------------------
+
+-- | A node's colour: red, green and blue.
+data RgbColor = RgbColor
+  {-# UNPACK #-} !Word8
+  {-# UNPACK #-} !Word8
+  {-# UNPACK #-} !Word8
+  deriving (Eq, Show, Generic)
+
+instance NFData RgbColor
+
+-- | A 32-byte node alias. Origin nodes should use UTF-8 padded with zero
+--   bytes, but receivers must accept any bytes.
+newtype Alias = Alias BS.ByteString
+  deriving (Eq, Show, Generic)
+
+instance NFData Alias
+
+-- | Construct an t'Alias' from exactly 32 bytes.
+--
+--   >>> alias "too short"
+--   Nothing
+alias :: BS.ByteString -> Maybe Alias
+alias bs
+  | BS.length bs == 32 = Just (Alias bs)
+  | otherwise          = Nothing
+{-# INLINE alias #-}
+
+-- | The bytes of an t'Alias'.
+un_alias :: Alias -> BS.ByteString
+un_alias (Alias bs) = bs
+{-# INLINE un_alias #-}
+
+-- | A 4-byte IPv4 address.
+newtype IPv4Addr = IPv4Addr BS.ByteString
+  deriving (Eq, Show, Generic)
+
+instance NFData IPv4Addr
+
+-- | Construct an t'IPv4Addr' from exactly 4 bytes.
+--
+--   >>> ipv4_addr "\127\NUL\NUL\SOH"
+--   Just (IPv4Addr "\DEL\NUL\NUL\SOH")
+ipv4_addr :: BS.ByteString -> Maybe IPv4Addr
+ipv4_addr bs
+  | BS.length bs == 4 = Just (IPv4Addr bs)
+  | otherwise         = Nothing
+{-# INLINE ipv4_addr #-}
+
+-- | The bytes of an t'IPv4Addr'.
+un_ipv4_addr :: IPv4Addr -> BS.ByteString
+un_ipv4_addr (IPv4Addr bs) = bs
+{-# INLINE un_ipv4_addr #-}
+
+-- | A 16-byte IPv6 address.
+newtype IPv6Addr = IPv6Addr BS.ByteString
+  deriving (Eq, Show, Generic)
+
+instance NFData IPv6Addr
+
+-- | Construct an t'IPv6Addr' from exactly 16 bytes.
+ipv6_addr :: BS.ByteString -> Maybe IPv6Addr
+ipv6_addr bs
+  | BS.length bs == 16 = Just (IPv6Addr bs)
+  | otherwise          = Nothing
+{-# INLINE ipv6_addr #-}
+
+-- | The bytes of an t'IPv6Addr'.
+un_ipv6_addr :: IPv6Addr -> BS.ByteString
+un_ipv6_addr (IPv6Addr bs) = bs
+{-# INLINE un_ipv6_addr #-}
+
+-- | The 12 data bytes of a deprecated Tor v2 address descriptor (type
+--   3). They are kept, uninterpreted, so that re-encoding reproduces
+--   the signed bytes.
+newtype TorV2Addr = TorV2Addr BS.ByteString
+  deriving (Eq, Show, Generic)
+
+instance NFData TorV2Addr
+
+-- | Construct a t'TorV2Addr' from exactly 12 bytes.
+tor_v2_addr :: BS.ByteString -> Maybe TorV2Addr
+tor_v2_addr bs
+  | BS.length bs == 12 = Just (TorV2Addr bs)
+  | otherwise          = Nothing
+{-# INLINE tor_v2_addr #-}
+
+-- | The bytes of a t'TorV2Addr'.
+un_tor_v2_addr :: TorV2Addr -> BS.ByteString
+un_tor_v2_addr (TorV2Addr bs) = bs
+{-# INLINE un_tor_v2_addr #-}
+
+-- | A 35-byte Tor v3 onion service address: a 32-byte ed25519 public
+--   key, a 2-byte checksum and a 1-byte version.
+newtype TorV3Addr = TorV3Addr BS.ByteString
+  deriving (Eq, Show, Generic)
+
+instance NFData TorV3Addr
+
+-- | Construct a t'TorV3Addr' from exactly 35 bytes.
+tor_v3_addr :: BS.ByteString -> Maybe TorV3Addr
+tor_v3_addr bs
+  | BS.length bs == 35 = Just (TorV3Addr bs)
+  | otherwise          = Nothing
+{-# INLINE tor_v3_addr #-}
+
+-- | The bytes of a t'TorV3Addr'.
+un_tor_v3_addr :: TorV3Addr -> BS.ByteString
+un_tor_v3_addr (TorV3Addr bs) = bs
+{-# INLINE un_tor_v3_addr #-}
+
+-- | A DNS hostname of at most 255 bytes (the limit of its length byte).
+--
+--   BOLT #7 requires hostnames to be ASCII, with other characters
+--   Punycode-encoded, but receivers keep whatever bytes they are given;
+--   see 'is_ascii_hostname'.
+newtype Hostname = Hostname BS.ByteString
+  deriving (Eq, Show, Generic)
+
+instance NFData Hostname
+
+-- | Construct a t'Hostname' from at most 255 bytes.
+--
+--   >>> hostname "ln.example.com"
+--   Just (Hostname "ln.example.com")
+--   >>> hostname (BS.replicate 256 0x61)
+--   Nothing
+hostname :: BS.ByteString -> Maybe Hostname
+hostname bs
+  | BS.length bs <= 255 = Just (Hostname bs)
+  | otherwise           = Nothing
+{-# INLINE hostname #-}
+
+-- | The bytes of a t'Hostname'.
+un_hostname :: Hostname -> BS.ByteString
+un_hostname (Hostname bs) = bs
+{-# INLINE un_hostname #-}
+
+-- | Whether a t'Hostname' is non-empty and ASCII, as BOLT #7 requires.
+--
+--   >>> fmap is_ascii_hostname (hostname "caf\233")
+--   Just False
+is_ascii_hostname :: Hostname -> Bool
+is_ascii_hostname (Hostname bs) = not (BS.null bs) && BS.all (< 0x80) bs
+{-# INLINE is_ascii_hostname #-}
+
+-- | An address descriptor of a known type, with its port where it has
+--   one.
+data Address
+  = AddrIPv4  !IPv4Addr  {-# UNPACK #-} !Word16  -- ^ type 1
+  | AddrIPv6  !IPv6Addr  {-# UNPACK #-} !Word16  -- ^ type 2
+  | AddrTorV2 !TorV2Addr                         -- ^ type 3 (deprecated)
+  | AddrTorV3 !TorV3Addr {-# UNPACK #-} !Word16  -- ^ type 4
+  | AddrDNS   !Hostname  {-# UNPACK #-} !Word16  -- ^ type 5
+  deriving (Eq, Show, Generic)
+
+instance NFData Address
+
+-- | The addresses a receiver should connect to, per the BOLT #7 receiver
+--   rules: drops Tor v2 descriptors, descriptors with port 0, DNS
+--   hostnames that are empty or not ASCII, and every DNS descriptor
+--   after the first.
+usable_addresses :: [Address] -> [Address]
+usable_addresses = go False
+  where
+    go _ [] = []
+    go !dns (a : as) = case a of
+      AddrIPv4 _ p  -> port p
+      AddrIPv6 _ p  -> port p
+      AddrTorV2 _   -> go dns as
+      AddrTorV3 _ p -> port p
+      AddrDNS h p
+        | dns                            -> go dns as
+        | p /= 0 && is_ascii_hostname h  -> a : go True as
+        | otherwise                      -> go True as
+      where
+        port p
+          | p == 0    = go dns as
+          | otherwise = a : go dns as
+
+-- query fields ---------------------------------------------------------------
+
+-- | A @query_flags@ bitfield, sent for each short channel id in a
+--   @query_short_channel_ids@. Every value is valid; unassigned bits are
+--   kept.
+newtype QueryFlags = QueryFlags Word64
+  deriving (Eq, Show, Generic)
+
+instance NFData QueryFlags
+
+-- | The assigned bits of t'QueryFlags'.
+data QueryFlag
+  = WantChannelAnnouncement  -- ^ bit 0
+  | WantChannelUpdate1       -- ^ bit 1: the @channel_update@ of node 1
+  | WantChannelUpdate2       -- ^ bit 2: the @channel_update@ of node 2
+  | WantNodeAnnouncement1    -- ^ bit 3: the @node_announcement@ of node 1
+  | WantNodeAnnouncement2    -- ^ bit 4: the @node_announcement@ of node 2
+  deriving (Eq, Ord, Show, Enum, Bounded, Generic)
+
+instance NFData QueryFlag
+
+-- | The t'QueryFlags' with exactly the given bits set.
+--
+--   >>> query_flags [WantChannelAnnouncement, WantChannelUpdate2]
+--   QueryFlags 5
+query_flags :: [QueryFlag] -> QueryFlags
+query_flags = QueryFlags . foldr (\f acc -> acc .|. bit (fromEnum f)) 0
+
+-- | Whether the given bit is set.
+--
+--   >>> has_query_flag WantChannelUpdate1 (QueryFlags 2)
+--   True
+has_query_flag :: QueryFlag -> QueryFlags -> Bool
+has_query_flag f (QueryFlags w) = testBit w (fromEnum f)
+{-# INLINE has_query_flag #-}
+
+-- | The @query_option_flags@ bitfield of a @query_channel_range@. Every
+--   value is valid; unassigned bits are kept.
+newtype QueryOption = QueryOption Word64
+  deriving (Eq, Show, Generic)
+
+instance NFData QueryOption
+
+-- | The assigned bits of t'QueryOption'.
+data QueryOptionFlag
+  = WantTimestamps  -- ^ bit 0
+  | WantChecksums   -- ^ bit 1
+  deriving (Eq, Ord, Show, Enum, Bounded, Generic)
+
+instance NFData QueryOptionFlag
+
+-- | The t'QueryOption' with exactly the given bits set.
+--
+--   >>> query_option [WantTimestamps, WantChecksums]
+--   QueryOption 3
+query_option :: [QueryOptionFlag] -> QueryOption
+query_option = QueryOption . foldr (\f acc -> acc .|. bit (fromEnum f)) 0
+
+-- | Whether the given bit is set.
+--
+--   >>> has_query_option WantChecksums (QueryOption 1)
+--   False
+has_query_option :: QueryOptionFlag -> QueryOption -> Bool
+has_query_option f (QueryOption w) = testBit w (fromEnum f)
+{-# INLINE has_query_option #-}
+
+-- | The timestamps of a channel's latest @channel_update@s, from
+--   @node_id_1@ and @node_id_2@ (0 where there is none).
+data ChannelUpdateTimestamps = ChannelUpdateTimestamps
+  {-# UNPACK #-} !Word32
+  {-# UNPACK #-} !Word32
+  deriving (Eq, Show, Generic)
+
+instance NFData ChannelUpdateTimestamps
+
+-- | The checksums of a channel's latest @channel_update@s, from
+--   @node_id_1@ and @node_id_2@ (0 where there is none).
+data ChannelUpdateChecksums = ChannelUpdateChecksums
+  {-# UNPACK #-} !Word32
+  {-# UNPACK #-} !Word32
+  deriving (Eq, Show, Generic)
+
+instance NFData ChannelUpdateChecksums

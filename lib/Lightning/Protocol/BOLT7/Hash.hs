@@ -1,5 +1,4 @@
-{-# OPTIONS_HADDOCK prune #-}
-
+{-# OPTIONS_HADDOCK hide #-}
 {-# LANGUAGE BangPatterns #-}
 
 -- |
@@ -8,139 +7,117 @@
 -- License: MIT
 -- Maintainer: Jared Tobin <jared@ppad.tech>
 --
--- Signature hash computation for BOLT #7 messages.
+-- Signature digests, signature verification and checksums for BOLT #7
+-- messages.
 --
--- These functions compute the double-SHA256 hash that is signed in each
--- message type. The hash covers the message content excluding the
--- signature field(s).
---
--- Each function takes the message payload as received: the bytes after
--- the 2-byte message type. The signatures cover every byte of that
--- payload, so hash the received bytes rather than a re-encoding of a
--- decoded message. Each function returns 'Nothing' if the input is too
--- short to hold the message.
+-- Signatures cover the encoded message after its signature fields,
+-- extension included. Since decoding keeps every byte, the digest of a
+-- decoded message is the digest of the bytes received.
 
 module Lightning.Protocol.BOLT7.Hash (
-  -- * Signature hashes
-    channelAnnouncementHash
-  , nodeAnnouncementHash
-  , channelUpdateHash
-
-  -- * Checksums
-  , channelUpdateChecksum
+    channel_announcement_hash
+  , node_announcement_hash
+  , channel_update_hash
+  , verify_channel_announcement
+  , verify_node_announcement
+  , verify_channel_update
+  , channel_update_checksum
   ) where
 
-import Data.ByteString (ByteString)
+import qualified Crypto.Curve.Secp256k1 as Secp256k1
+import qualified Crypto.Hash.SHA256 as SHA256
 import qualified Data.ByteString as BS
 import Data.Word (Word32)
-import qualified Crypto.Hash.SHA256 as SHA256
-import qualified Lightning.Protocol.BOLT1.Prim as Prim
+import Lightning.Protocol.BOLT1 (Point, Signature)
+import qualified Lightning.Protocol.BOLT1 as BOLT1
 import Lightning.Protocol.BOLT7.CRC32C (crc32c)
-import Lightning.Protocol.BOLT7.Types
-  ( signatureLen, chainHashLen, shortChannelIdLen, pointLen, nodeIdLen
-  , rgbColorLen, aliasLen )
+import Lightning.Protocol.BOLT7.Codec
+import Lightning.Protocol.BOLT7.Messages
 
--- | Double SHA-256 hash (used for Lightning message signing).
-doubleSha256 :: ByteString -> ByteString
-doubleSha256 = SHA256.hash . SHA256.hash
-{-# INLINE doubleSha256 #-}
+-- the signed bytes of each message
+announcement_signed :: ChannelAnnouncement -> Either EncodeError BS.ByteString
+announcement_signed = fmap (BS.drop 256) . encode_channel_announcement
+{-# INLINE announcement_signed #-}
 
--- | Read the big-endian u16 at an offset, if present.
-u16At :: Int -> ByteString -> Maybe Int
-u16At off bs = fmap (fromIntegral . fst) (Prim.decodeU16 (BS.drop off bs))
-{-# INLINE u16At #-}
+node_signed :: NodeAnnouncement -> Either EncodeError BS.ByteString
+node_signed = fmap (BS.drop 64) . encode_node_announcement
+{-# INLINE node_signed #-}
 
--- | Length of a channel_update without extension bytes (136).
-channelUpdateLen :: Int
-channelUpdateLen = signatureLen + chainHashLen + shortChannelIdLen + 32
-{-# INLINE channelUpdateLen #-}
+update_signed :: ChannelUpdate -> BS.ByteString
+update_signed = BS.drop 64 . encode_channel_update
+{-# INLINE update_signed #-}
 
--- | Compute signature hash for channel_announcement.
---
--- The hash covers the message starting at byte offset 256, which is after
--- the four 64-byte signatures (node_sig_1, node_sig_2, bitcoin_sig_1,
--- bitcoin_sig_2).
---
--- Returns the double-SHA256 hash (32 bytes), or 'Nothing' if the input
--- cannot hold the fields of a channel_announcement with its declared
--- feature length.
-channelAnnouncementHash :: ByteString -> Maybe ByteString
-channelAnnouncementHash !msg = do
-  let !offset = 4 * signatureLen
-  flen <- u16At offset msg
-  -- features, chain_hash, short_channel_id, node_ids, bitcoin_keys
-  let !minLen = offset + 2 + flen + chainHashLen + shortChannelIdLen
-                + 2 * nodeIdLen + 2 * pointLen
-  if BS.length msg < minLen
-    then Nothing
-    else Just (doubleSha256 (BS.drop offset msg))
-{-# INLINE channelAnnouncementHash #-}
+double_sha256 :: BS.ByteString -> BS.ByteString
+double_sha256 = SHA256.hash . SHA256.hash
+{-# INLINE double_sha256 #-}
 
--- | Compute signature hash for node_announcement.
---
--- The hash covers the message starting after the signature field (64 bytes).
---
--- Returns the double-SHA256 hash (32 bytes), or 'Nothing' if the input
--- cannot hold the fields of a node_announcement with its declared
--- feature and address lengths.
-nodeAnnouncementHash :: ByteString -> Maybe ByteString
-nodeAnnouncementHash !msg = do
-  flen <- u16At signatureLen msg
-  -- features, timestamp, node_id, rgb_color, alias
-  let !addrOff = signatureLen + 2 + flen + 4 + nodeIdLen + rgbColorLen
-                 + aliasLen
-  addrlen <- u16At addrOff msg
-  if BS.length msg < addrOff + 2 + addrlen
-    then Nothing
-    else Just (doubleSha256 (BS.drop signatureLen msg))
-{-# INLINE nodeAnnouncementHash #-}
+-- | The digest the four signatures of a t'ChannelAnnouncement' sign: the
+--   double SHA-256 of its encoding from offset 256 (after the
+--   signatures) to the end. Fails as 'encode_channel_announcement' does.
+channel_announcement_hash
+  :: ChannelAnnouncement -> Either EncodeError BS.ByteString
+channel_announcement_hash = fmap double_sha256 . announcement_signed
 
--- | Compute signature hash for channel_update.
---
--- The hash covers the message starting after the signature field (64 bytes).
---
--- Returns the double-SHA256 hash (32 bytes), or 'Nothing' if the input
--- is shorter than a channel_update (136 bytes).
-channelUpdateHash :: ByteString -> Maybe ByteString
-channelUpdateHash !msg
-  | BS.length msg < channelUpdateLen = Nothing
-  | otherwise = Just (doubleSha256 (BS.drop signatureLen msg))
-{-# INLINE channelUpdateHash #-}
+-- | The digest the signature of a t'NodeAnnouncement' signs: the double
+--   SHA-256 of its encoding after the signature. Fails as
+--   'encode_node_announcement' does.
+node_announcement_hash
+  :: NodeAnnouncement -> Either EncodeError BS.ByteString
+node_announcement_hash = fmap double_sha256 . node_signed
 
--- | Compute checksum for channel_update.
+-- | The digest the signature of a t'ChannelUpdate' signs: the double
+--   SHA-256 of its encoding after the signature.
+channel_update_hash :: ChannelUpdate -> BS.ByteString
+channel_update_hash = double_sha256 . update_signed
+
+-- | Verify the four signatures of a t'ChannelAnnouncement': both node
+--   signatures and both bitcoin signatures, each over
+--   'channel_announcement_hash' under the corresponding key.
 --
--- This is the CRC-32C of the channel_update message excluding the
--- signature field (bytes 0-63) and timestamp field (bytes 104-107).
+--   As with libsecp256k1, signatures must be in low-s form. A key that
+--   isn't a point on the curve fails verification.
+verify_channel_announcement :: ChannelAnnouncement -> Bool
+verify_channel_announcement m = case announcement_signed m of
+  Left _ -> False
+  Right signed ->
+    let !d = SHA256.hash signed
+    in  verify d (ca_node_id_1 m) (ca_node_signature_1 m)
+          && verify d (ca_node_id_2 m) (ca_node_signature_2 m)
+          && verify d (ca_bitcoin_key_1 m) (ca_bitcoin_signature_1 m)
+          && verify d (ca_bitcoin_key_2 m) (ca_bitcoin_signature_2 m)
+
+-- | Verify the signature of a t'NodeAnnouncement' under its node id.
 --
--- The checksum is used in the checksums_tlv of reply_channel_range.
+--   As with libsecp256k1, the signature must be in low-s form.
+verify_node_announcement :: NodeAnnouncement -> Bool
+verify_node_announcement m = case node_signed m of
+  Left _       -> False
+  Right signed -> verify (SHA256.hash signed) (na_node_id m) (na_signature m)
+
+-- | Verify the signature of a t'ChannelUpdate' under the given node id.
 --
--- Returns 'Nothing' if the input is shorter than a channel_update
--- (136 bytes).
---
--- Message layout after signature:
---   - chain_hash: 32 bytes (offset 64-95)
---   - short_channel_id: 8 bytes (offset 96-103)
---   - timestamp: 4 bytes (offset 104-107) -- EXCLUDED
---   - message_flags: 1 byte (offset 108)
---   - channel_flags: 1 byte (offset 109)
---   - cltv_expiry_delta: 2 bytes (offset 110-111)
---   - htlc_minimum_msat: 8 bytes (offset 112-119)
---   - fee_base_msat: 4 bytes (offset 120-123)
---   - fee_proportional_millionths: 4 bytes (offset 124-127)
---   - htlc_maximum_msat: 8 bytes (offset 128-135)
-channelUpdateChecksum :: ByteString -> Maybe Word32
-channelUpdateChecksum !msg
-  | BS.length msg < channelUpdateLen = Nothing
-  | otherwise = Just (crc32c checksumData)
-  where
-    -- Offset 64: chain_hash (32 bytes)
-    chainHash = BS.take chainHashLen (BS.drop signatureLen msg)
-    -- Offset 96: short_channel_id (8 bytes)
-    scid = BS.take 8 (BS.drop (signatureLen + chainHashLen) msg)
-    -- Skip timestamp (4 bytes at offset 104)
-    -- Offset 108 to end: rest of message
-    restOffset = signatureLen + chainHashLen + 8 + 4  -- 64 + 32 + 8 + 4 = 108
-    rest = BS.drop restOffset msg
-    -- Concatenate: chain_hash + scid + (message without sig and timestamp)
-    checksumData = BS.concat [chainHash, scid, rest]
-{-# INLINE channelUpdateChecksum #-}
+--   The key is that of the channel's t'ChannelAnnouncement' selected by
+--   the update's direction: 'ca_node_id_1' for
+--   'Lightning.Protocol.BOLT7.NodeOne', 'ca_node_id_2' for
+--   'Lightning.Protocol.BOLT7.NodeTwo'. As with libsecp256k1, the
+--   signature must be in low-s form.
+verify_channel_update :: Point -> ChannelUpdate -> Bool
+verify_channel_update k m =
+  verify (SHA256.hash (update_signed m)) k (cu_signature m)
+
+-- verify a signature over the double SHA-256 of some bytes, given their
+-- single SHA-256 (secp256k1's verify_ecdsa hashes once more)
+verify :: BS.ByteString -> Point -> Signature -> Bool
+verify d k s =
+  case ( Secp256k1.parse_point (BOLT1.un_point k)
+       , Secp256k1.parse_sig (BOLT1.un_signature s) ) of
+    (Just p, Just sig) -> Secp256k1.verify_ecdsa' Secp256k1.precompute d p sig
+    _                  -> False
+
+-- | The checksum of a t'ChannelUpdate', as used in the @checksums_tlv@ of
+--   @reply_channel_range@: the CRC-32C (RFC 3720) of the update without
+--   its signature and timestamp. Extension records are included.
+channel_update_checksum :: ChannelUpdate -> Word32
+channel_update_checksum m =
+  let !bs = encode_channel_update m
+  in  crc32c (BS.take 40 (BS.drop 64 bs) <> BS.drop 108 bs)

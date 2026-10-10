@@ -1,3 +1,4 @@
+{-# OPTIONS_HADDOCK hide #-}
 {-# LANGUAGE BangPatterns #-}
 
 -- |
@@ -6,44 +7,43 @@
 -- License: MIT
 -- Maintainer: Jared Tobin <jared@ppad.tech>
 --
--- CRC-32C (Castagnoli) implementation for BOLT #7 checksums.
---
--- This is an internal helper module implementing CRC-32C as specified
--- in RFC 3720. CRC-32C uses the Castagnoli polynomial 0x1EDC6F41.
+-- CRC-32C (Castagnoli), per RFC 3720, for @channel_update@ checksums.
 
 module Lightning.Protocol.BOLT7.CRC32C (
     crc32c
   ) where
 
-import Data.Bits (shiftR, xor, (.&.))
-import Data.ByteString (ByteString)
+import Data.Bits (complement, shiftL, shiftR, xor, (.&.), (.|.))
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Unsafe as BU
 import Data.Word (Word8, Word32)
 
--- | CRC-32C polynomial (Castagnoli): 0x1EDC6F41 reflected = 0x82F63B78
-crc32cPoly :: Word32
-crc32cPoly = 0x82F63B78
-{-# INLINE crc32cPoly #-}
-
--- | Compute CRC-32C of a bytestring.
---
--- >>> crc32c "123456789"
--- 0xe3069283
-crc32c :: ByteString -> Word32
-crc32c = xor 0xFFFFFFFF . BS.foldl' updateByte 0xFFFFFFFF
+-- | The CRC-32C of a byte string.
+crc32c :: BS.ByteString -> Word32
+crc32c = complement . BS.foldl' step 0xFFFFFFFF
+  where
+    step !c !b = (c `shiftR` 8) `xor` entry (fromIntegral c `xor` b)
 {-# INLINE crc32c #-}
 
--- | Update CRC with a single byte.
-updateByte :: Word32 -> Word8 -> Word32
-updateByte !crc !byte =
-  let crc' = crc `xor` fromIntegral byte
-  in  go 8 crc'
+-- the table entry for a byte, read from 'table'
+entry :: Word8 -> Word32
+entry i =
+  let !o = 4 * fromIntegral i  -- at most 1020, within the 1024-byte table
+      byte k = fromIntegral (BU.unsafeIndex table (o + k)) :: Word32
+  in  byte 0 .|. (byte 1 `shiftL` 8) .|. (byte 2 `shiftL` 16)
+        .|. (byte 3 `shiftL` 24)
+{-# INLINE entry #-}
+
+-- the 256 table entries, little-endian
+table :: BS.ByteString
+table = fst (BS.unfoldrN 1024 byte 0)
   where
-    go :: Int -> Word32 -> Word32
+    byte :: Int -> Maybe (Word8, Int)
+    byte k = Just
+      (fromIntegral (go (8 :: Int) (fromIntegral (k `shiftR` 2))
+                       `shiftR` (8 * (k .&. 3))), k + 1)
+    -- the Castagnoli polynomial 0x1EDC6F41, bit-reflected
+    poly = 0x82F63B78 :: Word32
     go 0 !c = c
-    go !n !c =
-      let c' = if c .&. 1 /= 0
-               then (c `shiftR` 1) `xor` crc32cPoly
-               else c `shiftR` 1
-      in  go (n - 1) c'
-{-# INLINE updateByte #-}
+    go n !c = go (n - 1) ((c `shiftR` 1) `xor` (poly .&. negate (c .&. 1)))
+{-# NOINLINE table #-}

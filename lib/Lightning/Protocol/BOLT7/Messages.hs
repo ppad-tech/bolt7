@@ -1,6 +1,4 @@
-{-# OPTIONS_HADDOCK prune #-}
-
-{-# LANGUAGE BangPatterns #-}
+{-# OPTIONS_HADDOCK hide #-}
 {-# LANGUAGE DeriveGeneric #-}
 
 -- |
@@ -9,240 +7,189 @@
 -- License: MIT
 -- Maintainer: Jared Tobin <jared@ppad.tech>
 --
--- BOLT #7 gossip message type definitions.
+-- The messages defined by BOLT #7.
 
 module Lightning.Protocol.BOLT7.Messages (
-  -- * Message types
-    MsgType(..)
-  , msgTypeCode
-
-  -- * Channel announcement
+    Message(..)
+  , message_type
   , ChannelAnnouncement(..)
-
-  -- * Node announcement
   , NodeAnnouncement(..)
-
-  -- * Channel update
   , ChannelUpdate(..)
-
-  -- * Announcement signatures
   , AnnouncementSignatures(..)
-
-  -- * Query messages
   , QueryShortChannelIds(..)
   , ReplyShortChannelIdsEnd(..)
   , QueryChannelRange(..)
   , ReplyChannelRange(..)
   , GossipTimestampFilter(..)
-
-  -- * Union type
-  , Message(..)
   ) where
 
 import Control.DeepSeq (NFData)
-import Data.ByteString (ByteString)
-import Data.Word (Word8, Word16, Word32)
+import qualified Data.ByteString as BS
+import Data.Word (Word16, Word32)
 import GHC.Generics (Generic)
-import Lightning.Protocol.BOLT1 (TlvStream)
+import Lightning.Protocol.BOLT1
+  ( ChainHash, ChannelId, MilliSatoshi, Point, ShortChannelId
+  , Signature, TlvStream )
+import qualified Lightning.Protocol.BOLT9 as BOLT9
 import Lightning.Protocol.BOLT7.Types
 
--- Message type codes ----------------------------------------------------------
-
--- | BOLT #7 message type codes.
-data MsgType
-  = MsgChannelAnnouncement       -- ^ 256
-  | MsgNodeAnnouncement          -- ^ 257
-  | MsgChannelUpdate             -- ^ 258
-  | MsgAnnouncementSignatures    -- ^ 259
-  | MsgQueryShortChannelIds      -- ^ 261
-  | MsgReplyShortChannelIdsEnd   -- ^ 262
-  | MsgQueryChannelRange         -- ^ 263
-  | MsgReplyChannelRange         -- ^ 264
-  | MsgGossipTimestampFilter     -- ^ 265
-  deriving (Eq, Show, Generic)
-
-instance NFData MsgType
-
--- | Get numeric code for message type.
-msgTypeCode :: MsgType -> Word16
-msgTypeCode MsgChannelAnnouncement     = 256
-msgTypeCode MsgNodeAnnouncement        = 257
-msgTypeCode MsgChannelUpdate           = 258
-msgTypeCode MsgAnnouncementSignatures  = 259
-msgTypeCode MsgQueryShortChannelIds    = 261
-msgTypeCode MsgReplyShortChannelIdsEnd = 262
-msgTypeCode MsgQueryChannelRange       = 263
-msgTypeCode MsgReplyChannelRange       = 264
-msgTypeCode MsgGossipTimestampFilter   = 265
-{-# INLINE msgTypeCode #-}
-
--- Channel announcement --------------------------------------------------------
-
--- | channel_announcement message (type 256).
---
--- Announces a public channel to the network.
+-- | The @channel_announcement@ message (type 256).
 data ChannelAnnouncement = ChannelAnnouncement
-  { channelAnnNodeSig1     :: !Signature     -- ^ Signature from node_id_1
-  , channelAnnNodeSig2     :: !Signature     -- ^ Signature from node_id_2
-  , channelAnnBitcoinSig1  :: !Signature     -- ^ Signature from bitcoin_key_1
-  , channelAnnBitcoinSig2  :: !Signature     -- ^ Signature from bitcoin_key_2
-  , channelAnnFeatures     :: !FeatureBits   -- ^ Feature bits
-  , channelAnnChainHash    :: !ChainHash     -- ^ Chain identifier
-  , channelAnnShortChanId  :: !ShortChannelId -- ^ Short channel ID
-  , channelAnnNodeId1      :: !NodeId        -- ^ First node (lexicographically)
-  , channelAnnNodeId2      :: !NodeId        -- ^ Second node
-  , channelAnnBitcoinKey1  :: !Point         -- ^ Bitcoin key for node_id_1
-  , channelAnnBitcoinKey2  :: !Point         -- ^ Bitcoin key for node_id_2
-  }
-  deriving (Eq, Show, Generic)
+  { ca_node_signature_1    :: !Signature
+  , ca_node_signature_2    :: !Signature
+  , ca_bitcoin_signature_1 :: !Signature
+  , ca_bitcoin_signature_2 :: !Signature
+  , ca_features            :: !BOLT9.FeatureVector
+  , ca_chain_hash          :: !ChainHash
+  , ca_short_channel_id    :: {-# UNPACK #-} !ShortChannelId
+  , ca_node_id_1           :: !Point
+    -- ^ the lexicographically lesser node id
+  , ca_node_id_2           :: !Point
+  , ca_bitcoin_key_1       :: !Point
+  , ca_bitcoin_key_2       :: !Point
+  , ca_tlvs                :: !TlvStream
+    -- ^ extension TLV records (all unknown odd)
+  } deriving (Eq, Show, Generic)
 
 instance NFData ChannelAnnouncement
 
--- Node announcement -----------------------------------------------------------
-
--- | node_announcement message (type 257).
---
--- Advertises node metadata to the network.
+-- | The @node_announcement@ message (type 257).
 data NodeAnnouncement = NodeAnnouncement
-  { nodeAnnSignature  :: !Signature      -- ^ Signature of message
-  , nodeAnnFeatures   :: !FeatureBits    -- ^ Feature bits
-  , nodeAnnTimestamp  :: !Timestamp      -- ^ Unix timestamp
-  , nodeAnnNodeId     :: !NodeId         -- ^ Node public key
-  , nodeAnnRgbColor   :: !RgbColor       -- ^ RGB color
-  , nodeAnnAlias      :: !Alias          -- ^ Node alias (32 bytes UTF-8)
-  , nodeAnnAddresses  :: ![Address]      -- ^ List of addresses
-  }
-  deriving (Eq, Show, Generic)
+  { na_signature         :: !Signature
+  , na_features          :: !BOLT9.FeatureVector
+  , na_timestamp         :: {-# UNPACK #-} !Word32
+  , na_node_id           :: !Point
+  , na_rgb_color         :: !RgbColor
+  , na_alias             :: !Alias
+  , na_addresses         :: ![Address]
+    -- ^ address descriptors of known types, in order
+  , na_unknown_addresses :: !BS.ByteString
+    -- ^ the address bytes from the first descriptor of an unknown type
+    --   on (empty if there is none), kept as received
+  , na_tlvs              :: !TlvStream
+    -- ^ extension TLV records (all unknown odd)
+  } deriving (Eq, Show, Generic)
 
 instance NFData NodeAnnouncement
 
--- Channel update --------------------------------------------------------------
-
--- | channel_update message (type 258).
---
--- Communicates per-direction routing parameters.
---
--- The message_flags field is not stored: the encoder always
--- writes bit 0 (@must_be_one@), and the decoder ignores it.
+-- | The @channel_update@ message (type 258).
 data ChannelUpdate = ChannelUpdate
-  { chanUpdateSignature       :: !Signature
-    -- ^ Signature of message
-  , chanUpdateChainHash       :: !ChainHash
-    -- ^ Chain identifier
-  , chanUpdateShortChanId     :: !ShortChannelId
-    -- ^ Short channel ID
-  , chanUpdateTimestamp       :: !Timestamp
-    -- ^ Unix timestamp
-  , chanUpdateChanFlags       :: !ChannelFlags
-    -- ^ Channel flags
-  , chanUpdateCltvExpDelta    :: !CltvExpiryDelta
-    -- ^ CLTV expiry delta
-  , chanUpdateHtlcMinMsat     :: !HtlcMinimumMsat
-    -- ^ Minimum HTLC msat
-  , chanUpdateFeeBaseMsat     :: !FeeBaseMsat
-    -- ^ Base fee msat
-  , chanUpdateFeeProportional :: !FeeProportionalMillionths
-    -- ^ Proportional fee
-  , chanUpdateHtlcMaxMsat     :: !HtlcMaximumMsat
-    -- ^ Max HTLC msat
-  }
-  deriving (Eq, Show, Generic)
+  { cu_signature                   :: !Signature
+  , cu_chain_hash                  :: !ChainHash
+  , cu_short_channel_id            :: {-# UNPACK #-} !ShortChannelId
+  , cu_timestamp                   :: {-# UNPACK #-} !Word32
+  , cu_message_flags               :: {-# UNPACK #-} !MessageFlags
+  , cu_channel_flags               :: {-# UNPACK #-} !ChannelFlags
+  , cu_cltv_expiry_delta           :: {-# UNPACK #-} !Word16
+  , cu_htlc_minimum_msat           :: {-# UNPACK #-} !MilliSatoshi
+  , cu_fee_base_msat               :: {-# UNPACK #-} !Word32
+  , cu_fee_proportional_millionths :: {-# UNPACK #-} !Word32
+  , cu_htlc_maximum_msat           :: {-# UNPACK #-} !MilliSatoshi
+  , cu_tlvs                        :: !TlvStream
+    -- ^ extension TLV records (all unknown odd)
+  } deriving (Eq, Show, Generic)
 
 instance NFData ChannelUpdate
 
--- Announcement signatures -----------------------------------------------------
-
--- | announcement_signatures message (type 259).
---
--- Sent between channel peers to enable channel announcement.
+-- | The @announcement_signatures@ message (type 259).
 data AnnouncementSignatures = AnnouncementSignatures
-  { annSigChannelId     :: !ChannelId       -- ^ Channel ID
-  , annSigShortChanId   :: !ShortChannelId  -- ^ Short channel ID
-  , annSigNodeSig       :: !Signature       -- ^ Node signature
-  , annSigBitcoinSig    :: !Signature       -- ^ Bitcoin signature
-  }
-  deriving (Eq, Show, Generic)
+  { as_channel_id        :: !ChannelId
+  , as_short_channel_id  :: {-# UNPACK #-} !ShortChannelId
+  , as_node_signature    :: !Signature
+  , as_bitcoin_signature :: !Signature
+  , as_tlvs              :: !TlvStream
+    -- ^ extension TLV records (all unknown odd)
+  } deriving (Eq, Show, Generic)
 
 instance NFData AnnouncementSignatures
 
--- Query messages --------------------------------------------------------------
-
--- | query_short_channel_ids message (type 261).
---
--- Requests information about specific channels.
+-- | The @query_short_channel_ids@ message (type 261).
 data QueryShortChannelIds = QueryShortChannelIds
-  { queryScidsChainHash :: !ChainHash    -- ^ Chain identifier
-  , queryScidsData      :: !ByteString   -- ^ Encoded short_channel_ids
-  , queryScidsTlvs      :: !TlvStream    -- ^ Optional TLV (query_flags)
-  }
-  deriving (Eq, Show, Generic)
+  { qsci_chain_hash        :: !ChainHash
+  , qsci_short_channel_ids :: ![ShortChannelId]
+  , qsci_query_flags       :: !(Maybe [QueryFlags])
+    -- ^ @query_flags@ (TLV type 1): one per short channel id
+  , qsci_tlvs              :: !TlvStream
+    -- ^ unknown odd TLV records
+  } deriving (Eq, Show, Generic)
 
 instance NFData QueryShortChannelIds
 
--- | reply_short_channel_ids_end message (type 262).
---
--- Concludes response to query_short_channel_ids.
+-- | The @reply_short_channel_ids_end@ message (type 262).
 data ReplyShortChannelIdsEnd = ReplyShortChannelIdsEnd
-  { replyScidsChainHash    :: !ChainHash  -- ^ Chain identifier
-  , replyScidsFullInfo     :: !Word8      -- ^ 1 if complete, 0 otherwise
-  }
-  deriving (Eq, Show, Generic)
+  { rsce_chain_hash       :: !ChainHash
+  , rsce_full_information :: !Bool
+  , rsce_tlvs             :: !TlvStream
+    -- ^ extension TLV records (all unknown odd)
+  } deriving (Eq, Show, Generic)
 
 instance NFData ReplyShortChannelIdsEnd
 
--- | query_channel_range message (type 263).
---
--- Queries channels within a block range.
+-- | The @query_channel_range@ message (type 263).
 data QueryChannelRange = QueryChannelRange
-  { queryRangeChainHash  :: !ChainHash    -- ^ Chain identifier
-  , queryRangeFirstBlock :: !BlockHeight  -- ^ First block number
-  , queryRangeNumBlocks  :: !BlockCount   -- ^ Number of blocks
-  , queryRangeTlvs       :: !TlvStream    -- ^ Optional TLV
-  }
-  deriving (Eq, Show, Generic)
+  { qcr_chain_hash       :: !ChainHash
+  , qcr_first_blocknum   :: {-# UNPACK #-} !Word32
+  , qcr_number_of_blocks :: {-# UNPACK #-} !Word32
+  , qcr_query_option     :: !(Maybe QueryOption)
+    -- ^ @query_option@ (TLV type 1)
+  , qcr_tlvs             :: !TlvStream
+    -- ^ unknown odd TLV records
+  } deriving (Eq, Show, Generic)
 
 instance NFData QueryChannelRange
 
--- | reply_channel_range message (type 264).
---
--- Responds to query_channel_range with channel IDs.
+-- | The @reply_channel_range@ message (type 264).
 data ReplyChannelRange = ReplyChannelRange
-  { replyRangeChainHash    :: !ChainHash    -- ^ Chain identifier
-  , replyRangeFirstBlock   :: !BlockHeight  -- ^ First block
-  , replyRangeNumBlocks    :: !BlockCount   -- ^ Block count
-  , replyRangeSyncComplete :: !Word8        -- ^ 1 if complete
-  , replyRangeData         :: !ByteString   -- ^ Encoded SCIDs
-  , replyRangeTlvs         :: !TlvStream    -- ^ Optional TLVs
-  }
-  deriving (Eq, Show, Generic)
+  { rcr_chain_hash        :: !ChainHash
+  , rcr_first_blocknum    :: {-# UNPACK #-} !Word32
+  , rcr_number_of_blocks  :: {-# UNPACK #-} !Word32
+  , rcr_sync_complete     :: !Bool
+  , rcr_short_channel_ids :: ![ShortChannelId]
+  , rcr_timestamps        :: !(Maybe [ChannelUpdateTimestamps])
+    -- ^ @timestamps_tlv@ (TLV type 1): one per short channel id
+  , rcr_checksums         :: !(Maybe [ChannelUpdateChecksums])
+    -- ^ @checksums_tlv@ (TLV type 3): one per short channel id
+  , rcr_tlvs              :: !TlvStream
+    -- ^ unknown odd TLV records
+  } deriving (Eq, Show, Generic)
 
 instance NFData ReplyChannelRange
 
--- | gossip_timestamp_filter message (type 265).
---
--- Constrains which gossip messages are relayed.
+-- | The @gossip_timestamp_filter@ message (type 265).
 data GossipTimestampFilter = GossipTimestampFilter
-  { gossipFilterChainHash     :: !ChainHash  -- ^ Chain identifier
-  , gossipFilterFirstTimestamp :: !Word32    -- ^ First timestamp
-  , gossipFilterTimestampRange :: !Word32    -- ^ Timestamp range
-  }
-  deriving (Eq, Show, Generic)
+  { gtf_chain_hash      :: !ChainHash
+  , gtf_first_timestamp :: {-# UNPACK #-} !Word32
+  , gtf_timestamp_range :: {-# UNPACK #-} !Word32
+  , gtf_tlvs            :: !TlvStream
+    -- ^ extension TLV records (all unknown odd)
+  } deriving (Eq, Show, Generic)
 
 instance NFData GossipTimestampFilter
 
--- Union type ------------------------------------------------------------------
-
--- | Union of all BOLT #7 message types.
+-- | A BOLT #7 message.
 data Message
-  = MsgChanAnn !ChannelAnnouncement
-  | MsgNodeAnn !NodeAnnouncement
-  | MsgChanUpd !ChannelUpdate
-  | MsgAnnSig  !AnnouncementSignatures
-  | MsgQueryScids !QueryShortChannelIds
-  | MsgReplyScids !ReplyShortChannelIdsEnd
-  | MsgQueryRange !QueryChannelRange
-  | MsgReplyRange !ReplyChannelRange
-  | MsgGossipFilter !GossipTimestampFilter
+  = MsgChannelAnnouncement !ChannelAnnouncement
+  | MsgNodeAnnouncement !NodeAnnouncement
+  | MsgChannelUpdate !ChannelUpdate
+  | MsgAnnouncementSignatures !AnnouncementSignatures
+  | MsgQueryShortChannelIds !QueryShortChannelIds
+  | MsgReplyShortChannelIdsEnd !ReplyShortChannelIdsEnd
+  | MsgQueryChannelRange !QueryChannelRange
+  | MsgReplyChannelRange !ReplyChannelRange
+  | MsgGossipTimestampFilter !GossipTimestampFilter
   deriving (Eq, Show, Generic)
 
 instance NFData Message
+
+-- | The message type of a 'Message'.
+message_type :: Message -> Word16
+message_type m = case m of
+  MsgChannelAnnouncement _     -> 256
+  MsgNodeAnnouncement _        -> 257
+  MsgChannelUpdate _           -> 258
+  MsgAnnouncementSignatures _  -> 259
+  MsgQueryShortChannelIds _    -> 261
+  MsgReplyShortChannelIdsEnd _ -> 262
+  MsgQueryChannelRange _       -> 263
+  MsgReplyChannelRange _       -> 264
+  MsgGossipTimestampFilter _   -> 265
