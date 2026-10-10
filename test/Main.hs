@@ -193,10 +193,11 @@ channel_announcement_tests = testGroup "ChannelAnnouncement" [
             , channelAnnBitcoinKey1  = testPoint
             , channelAnnBitcoinKey2  = testPoint
             }
-          encoded = encodeChannelAnnouncement msg
-      case decodeChannelAnnouncement encoded of
-        Right (decoded, _) -> decoded @?= msg
-        Left e -> assertFailure $ "decode failed: " ++ show e
+      case encodeChannelAnnouncement msg of
+        Left e -> assertFailure $ "encode failed: " ++ show e
+        Right encoded -> case decodeChannelAnnouncement encoded of
+          Right (decoded, _) -> decoded @?= msg
+          Left e -> assertFailure $ "decode failed: " ++ show e
   ]
 
 -- Node Announcement Tests -----------------------------------------------------
@@ -569,7 +570,7 @@ hash_tests = testGroup "Hash Functions" [
   , testGroup "Signature Hashes" [
       testCase "channelAnnouncementHash produces 32 bytes" $ do
         -- Create a minimal valid encoded message
-        let msg = encodeChannelAnnouncement ChannelAnnouncement
+        case encodeChannelAnnouncement ChannelAnnouncement
               { channelAnnNodeSig1    = testSignature
               , channelAnnNodeSig2    = testSignature
               , channelAnnBitcoinSig1 = testSignature
@@ -581,9 +582,11 @@ hash_tests = testGroup "Hash Functions" [
               , channelAnnNodeId2     = testNodeId2
               , channelAnnBitcoinKey1 = testPoint
               , channelAnnBitcoinKey2 = testPoint
-              }
-            hashVal = channelAnnouncementHash msg
-        BS.length hashVal @?= 32
+              } of
+          Left e -> assertFailure $ "encode failed: " ++ show e
+          Right msg -> do
+            let hashVal = channelAnnouncementHash msg
+            BS.length hashVal @?= 32
     , testCase "nodeAnnouncementHash produces 32 bytes" $ do
         case encodeNodeAnnouncement NodeAnnouncement
               { nodeAnnSignature = testSignature
@@ -833,10 +836,11 @@ propChannelAnnouncementRoundtrip = property $ do
         , channelAnnBitcoinKey1  = testPoint
         , channelAnnBitcoinKey2  = testPoint
         }
-      encoded = encodeChannelAnnouncement msg
-  case decodeChannelAnnouncement encoded of
-    Right (decoded, _) -> decoded == msg
+  case encodeChannelAnnouncement msg of
     Left _ -> False
+    Right encoded -> case decodeChannelAnnouncement encoded of
+      Right (decoded, _) -> decoded == msg
+      Left _ -> False
 
 -- Property: ChannelUpdate roundtrip
 propChannelUpdateRoundtrip :: Word32 -> Word16 -> Property

@@ -222,7 +222,10 @@ testChannelAnnouncement = mkChannelAnnouncement
 
 -- | Encoded ChannelAnnouncement for decode benchmarks.
 encodedChannelAnnouncement :: BS.ByteString
-encodedChannelAnnouncement = encodeChannelAnnouncement testChannelAnnouncement
+encodedChannelAnnouncement =
+  case encodeChannelAnnouncement testChannelAnnouncement of
+    Right bs -> bs
+    Left _   -> error "encodedChannelAnnouncement: encode failed"
 {-# NOINLINE encodedChannelAnnouncement #-}
 
 -- | Test NodeAnnouncement message.

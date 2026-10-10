@@ -134,9 +134,14 @@ decodeLenPrefixed bs = do
     else Right (BS.splitAt n rest)
 {-# INLINE decodeLenPrefixed #-}
 
--- | Encode with u16 length prefix.
-encodeLenPrefixed :: ByteString -> ByteString
-encodeLenPrefixed bs = Prim.encodeU16 (fromIntegral $ BS.length bs) <> bs
+-- | Encode with u16 length prefix, failing if the length does not fit
+-- in a u16.
+encodeLenPrefixed :: ByteString -> Either EncodeError ByteString
+encodeLenPrefixed bs
+  | len > 65535 = Left EncodeLengthOverflow
+  | otherwise   = Right (Prim.encodeU16 (fromIntegral len) <> bs)
+  where
+    !len = BS.length bs
 {-# INLINE encodeLenPrefixed #-}
 
 -- | Decode fixed-length validated type.
@@ -263,20 +268,26 @@ decodeAddresses bs = do
 -- Channel announcement --------------------------------------------------------
 
 -- | Encode channel_announcement message.
-encodeChannelAnnouncement :: ChannelAnnouncement -> ByteString
-encodeChannelAnnouncement msg = mconcat
-  [ unSignature (channelAnnNodeSig1 msg)
-  , unSignature (channelAnnNodeSig2 msg)
-  , unSignature (channelAnnBitcoinSig1 msg)
-  , unSignature (channelAnnBitcoinSig2 msg)
-  , encodeLenPrefixed (getFeatureBits (channelAnnFeatures msg))
-  , unChainHash (channelAnnChainHash msg)
-  , scidToBytes (channelAnnShortChanId msg)
-  , getNodeId (channelAnnNodeId1 msg)
-  , getNodeId (channelAnnNodeId2 msg)
-  , unPoint (channelAnnBitcoinKey1 msg)
-  , unPoint (channelAnnBitcoinKey2 msg)
-  ]
+--
+-- Fails with 'EncodeLengthOverflow' if the feature bits exceed 65535
+-- bytes.
+encodeChannelAnnouncement :: ChannelAnnouncement
+                          -> Either EncodeError ByteString
+encodeChannelAnnouncement msg = do
+  features <- encodeLenPrefixed (getFeatureBits (channelAnnFeatures msg))
+  Right $ mconcat
+    [ unSignature (channelAnnNodeSig1 msg)
+    , unSignature (channelAnnNodeSig2 msg)
+    , unSignature (channelAnnBitcoinSig1 msg)
+    , unSignature (channelAnnBitcoinSig2 msg)
+    , features
+    , unChainHash (channelAnnChainHash msg)
+    , scidToBytes (channelAnnShortChanId msg)
+    , getNodeId (channelAnnNodeId1 msg)
+    , getNodeId (channelAnnNodeId2 msg)
+    , unPoint (channelAnnBitcoinKey1 msg)
+    , unPoint (channelAnnBitcoinKey2 msg)
+    ]
 
 -- | Decode channel_announcement message.
 decodeChannelAnnouncement :: ByteString
@@ -311,21 +322,22 @@ decodeChannelAnnouncement bs = do
 -- Node announcement -----------------------------------------------------------
 
 -- | Encode node_announcement message.
+--
+-- Fails with 'EncodeLengthOverflow' if the feature bits or the
+-- encoded addresses exceed 65535 bytes.
 encodeNodeAnnouncement :: NodeAnnouncement -> Either EncodeError ByteString
 encodeNodeAnnouncement msg = do
-  addrData <- encodeAddresses (nodeAnnAddresses msg)
-  let features = getFeatureBits (nodeAnnFeatures msg)
-  if BS.length features > 65535
-    then Left EncodeLengthOverflow
-    else Right $ mconcat
-      [ unSignature (nodeAnnSignature msg)
-      , encodeLenPrefixed features
-      , Prim.encodeU32 (nodeAnnTimestamp msg)
-      , getNodeId (nodeAnnNodeId msg)
-      , getRgbColor (nodeAnnRgbColor msg)
-      , getAlias (nodeAnnAlias msg)
-      , encodeLenPrefixed addrData
-      ]
+  features <- encodeLenPrefixed (getFeatureBits (nodeAnnFeatures msg))
+  addrs    <- encodeLenPrefixed =<< encodeAddresses (nodeAnnAddresses msg)
+  Right $ mconcat
+    [ unSignature (nodeAnnSignature msg)
+    , features
+    , Prim.encodeU32 (nodeAnnTimestamp msg)
+    , getNodeId (nodeAnnNodeId msg)
+    , getRgbColor (nodeAnnRgbColor msg)
+    , getAlias (nodeAnnAlias msg)
+    , addrs
+    ]
 
 -- | Encode address list.
 encodeAddresses :: [Address] -> Either EncodeError ByteString
@@ -471,17 +483,18 @@ decodeAnnouncementSignatures bs = do
 -- Query messages --------------------------------------------------------------
 
 -- | Encode query_short_channel_ids message.
+--
+-- Fails with 'EncodeLengthOverflow' if the encoded short_channel_ids
+-- exceed 65535 bytes.
 encodeQueryShortChannelIds :: QueryShortChannelIds
                            -> Either EncodeError ByteString
 encodeQueryShortChannelIds msg = do
-  let scidData = queryScidsData msg
-  if BS.length scidData > 65535
-    then Left EncodeLengthOverflow
-    else Right $ mconcat
-      [ unChainHash (queryScidsChainHash msg)
-      , encodeLenPrefixed scidData
-      , TLV.encodeTlvStream (queryScidsTlvs msg)
-      ]
+  scidData <- encodeLenPrefixed (queryScidsData msg)
+  Right $ mconcat
+    [ unChainHash (queryScidsChainHash msg)
+    , scidData
+    , TLV.encodeTlvStream (queryScidsTlvs msg)
+    ]
 
 -- | Decode query_short_channel_ids message.
 --
@@ -553,22 +566,23 @@ decodeQueryChannelRange bs = do
   Right (msg, BS.empty)
 
 -- | Encode reply_channel_range message.
+--
+-- Fails with 'EncodeLengthOverflow' if the encoded short_channel_ids
+-- exceed 65535 bytes.
 encodeReplyChannelRange :: ReplyChannelRange
                         -> Either EncodeError ByteString
 encodeReplyChannelRange msg = do
-  let rangeData = replyRangeData msg
-  if BS.length rangeData > 65535
-    then Left EncodeLengthOverflow
-    else Right $ mconcat
-      [ unChainHash (replyRangeChainHash msg)
-      , Prim.encodeU32
-          (getBlockHeight (replyRangeFirstBlock msg))
-      , Prim.encodeU32
-          (getBlockCount (replyRangeNumBlocks msg))
-      , BS.singleton (replyRangeSyncComplete msg)
-      , encodeLenPrefixed rangeData
-      , TLV.encodeTlvStream (replyRangeTlvs msg)
-      ]
+  rangeData <- encodeLenPrefixed (replyRangeData msg)
+  Right $ mconcat
+    [ unChainHash (replyRangeChainHash msg)
+    , Prim.encodeU32
+        (getBlockHeight (replyRangeFirstBlock msg))
+    , Prim.encodeU32
+        (getBlockCount (replyRangeNumBlocks msg))
+    , BS.singleton (replyRangeSyncComplete msg)
+    , rangeData
+    , TLV.encodeTlvStream (replyRangeTlvs msg)
+    ]
 
 -- | Decode reply_channel_range message.
 --
