@@ -5,7 +5,8 @@ module Main where
 import qualified Data.ByteString as BS
 import Data.Maybe (fromJust)
 import Data.Word (Word8, Word16, Word32)
-import Lightning.Protocol.BOLT1 (TlvStream, unsafeTlvStream)
+import Lightning.Protocol.BOLT1
+  (TlvRecord(..), TlvStream, unTlvStream, unsafeTlvStream)
 import Lightning.Protocol.BOLT7
 import Lightning.Protocol.BOLT7.CRC32C (crc32c)
 import Test.Tasty
@@ -461,6 +462,58 @@ query_tests = testGroup "Query Messages" [
           Right (decoded, _) -> decoded @?= msg
           Left e -> assertFailure $ "decode failed: " ++ show e
     ]
+  , tlvStreamTests "query_short_channel_ids TLVs" [1] $ \tlvs ->
+      fmap (unTlvStream . queryScidsTlvs . fst)
+        (decodeQueryShortChannelIds (mconcat
+          [ unChainHash testChainHash
+          , u16be 9
+          , encodeShortChannelIdList [testShortChannelId]
+          , tlvs
+          ]))
+  , tlvStreamTests "query_channel_range TLVs" [1] $ \tlvs ->
+      fmap (unTlvStream . queryRangeTlvs . fst)
+        (decodeQueryChannelRange (mconcat
+          [ unChainHash testChainHash
+          , BS.pack [0, 9, 0x27, 0xc0]  -- first_blocknum 600000
+          , BS.pack [0, 0, 0x27, 0x10]  -- number_of_blocks 10000
+          , tlvs
+          ]))
+  , tlvStreamTests "reply_channel_range TLVs" [1, 3] $ \tlvs ->
+      fmap (unTlvStream . replyRangeTlvs . fst)
+        (decodeReplyChannelRange (mconcat
+          [ unChainHash testChainHash
+          , BS.pack [0, 9, 0x27, 0xc0]  -- first_blocknum 600000
+          , BS.pack [0, 0, 0x27, 0x10]  -- number_of_blocks 10000
+          , BS.singleton 1              -- sync_complete
+          , u16be 9
+          , encodeShortChannelIdList [testShortChannelId]
+          , tlvs
+          ]))
+  ]
+
+-- | TLV stream tests for a query decoder, given its known TLV types
+-- and a function decoding a message that ends in the given TLV bytes.
+tlvStreamTests
+  :: String
+  -> [Word8]
+  -> (BS.ByteString -> Either DecodeError [TlvRecord])
+  -> TestTree
+tlvStreamTests name known dec = testGroup name [
+    testCase "empty stream" $
+      dec BS.empty @?= Right []
+  , testCase "keeps known types" $
+      dec (BS.pack (concatMap (\t -> [t, 1, 0x2a]) known))
+        @?= Right [TlvRecord (fromIntegral t) "\x2a" | t <- known]
+  , testCase "skips unknown odd types" $
+      dec (BS.pack [5, 0]) @?= Right []
+  , testCase "rejects unknown even types" $
+      dec (BS.pack [2, 0]) @?= Left DecodeTlvError
+  , testCase "rejects a length past the end" $
+      dec (BS.pack [1, 5, 0xaa]) @?= Left DecodeTlvError
+  , testCase "rejects repeated types" $
+      dec (BS.pack [1, 0, 1, 0]) @?= Left DecodeTlvError
+  , testCase "rejects a non-minimal BigSize" $
+      dec (BS.pack [0xfd, 0x00, 0x01, 0x00]) @?= Left DecodeTlvError
   ]
 
 -- SCID List Tests ------------------------------------------------------------
