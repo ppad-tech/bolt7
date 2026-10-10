@@ -143,7 +143,10 @@ testChannelAnnouncement = ChannelAnnouncement
 
 -- | Encoded ChannelAnnouncement for decode benchmarks.
 encodedChannelAnnouncement :: BS.ByteString
-encodedChannelAnnouncement = encodeChannelAnnouncement testChannelAnnouncement
+encodedChannelAnnouncement =
+  case encodeChannelAnnouncement testChannelAnnouncement of
+    Right bs -> bs
+    Left _   -> error "encodedChannelAnnouncement: encode failed"
 {-# NOINLINE encodedChannelAnnouncement #-}
 
 -- | Test NodeAnnouncement message.
@@ -178,7 +181,7 @@ testChannelUpdate = ChannelUpdate
   , chanUpdateHtlcMinMsat     = HtlcMinimumMsat 1000
   , chanUpdateFeeBaseMsat     = FeeBaseMsat 1000
   , chanUpdateFeeProportional = FeeProportionalMillionths 100
-  , chanUpdateHtlcMaxMsat     = Just (HtlcMaximumMsat 1000000000)
+  , chanUpdateHtlcMaxMsat     = HtlcMaximumMsat 1000000000
   }
 {-# NOINLINE testChannelUpdate #-}
 

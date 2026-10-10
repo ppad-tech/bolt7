@@ -2,10 +2,13 @@
 
 module Main where
 
+import qualified Crypto.Curve.Secp256k1 as Secp256k1
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Base16 as B16
 import Data.Maybe (fromJust)
-import Data.Word (Word16, Word32)
-import Lightning.Protocol.BOLT1 (TlvStream, unsafeTlvStream)
+import Data.Word (Word8, Word16, Word32)
+import Lightning.Protocol.BOLT1
+  (TlvRecord(..), TlvStream, unTlvStream, unsafeTlvStream)
 import Lightning.Protocol.BOLT7
 import Lightning.Protocol.BOLT7.CRC32C (crc32c)
 import Test.Tasty
@@ -24,6 +27,7 @@ main = defaultMain $ testGroup "ppad-bolt7" [
   , hash_tests
   , validation_tests
   , error_tests
+  , mainnet_tests
   , property_tests
   ]
 
@@ -78,6 +82,60 @@ mkScid :: Word32 -> Word32 -> Word16 -> ShortChannelId
 mkScid b t o = case shortChannelId b t o of
   Just s  -> s
   Nothing -> error "mkScid: invalid test fixture"
+
+-- | A channel_update fixture.
+testChannelUpdate :: ChannelUpdate
+testChannelUpdate = ChannelUpdate
+  { chanUpdateSignature       = testSignature
+  , chanUpdateChainHash       = testChainHash
+  , chanUpdateShortChanId     = testShortChannelId
+  , chanUpdateTimestamp       = 1234567890
+  , chanUpdateChanFlags       = ChannelFlags
+      { cfDirection = NodeOne, cfStatus = Enabled }
+  , chanUpdateCltvExpDelta    = CltvExpiryDelta 144
+  , chanUpdateHtlcMinMsat     = HtlcMinimumMsat 1000
+  , chanUpdateFeeBaseMsat     = FeeBaseMsat 1000
+  , chanUpdateFeeProportional = FeeProportionalMillionths 100
+  , chanUpdateHtlcMaxMsat     = HtlcMaximumMsat 1000000000
+  }
+
+-- | Unwrap a Maybe, failing the test on Nothing.
+expectJust :: String -> Maybe a -> IO a
+expectJust what = maybe (assertFailure ("unexpected Nothing: " ++ what)) pure
+
+-- | A node_announcement fixture with the given addresses.
+testNodeAnn :: [Address] -> NodeAnnouncement
+testNodeAnn addrs = NodeAnnouncement
+  { nodeAnnSignature = testSignature
+  , nodeAnnFeatures  = emptyFeatures
+  , nodeAnnTimestamp = 1234567890
+  , nodeAnnNodeId    = testNodeId
+  , nodeAnnRgbColor  = testRgbColor
+  , nodeAnnAlias     = testAlias
+  , nodeAnnAddresses = addrs
+  }
+
+-- | A channel_announcement fixture with the given features.
+testChannelAnn :: FeatureBits -> ChannelAnnouncement
+testChannelAnn feats = ChannelAnnouncement
+  { channelAnnNodeSig1    = testSignature
+  , channelAnnNodeSig2    = testSignature
+  , channelAnnBitcoinSig1 = testSignature
+  , channelAnnBitcoinSig2 = testSignature
+  , channelAnnFeatures    = feats
+  , channelAnnChainHash   = testChainHash
+  , channelAnnShortChanId = testShortChannelId
+  , channelAnnNodeId1     = testNodeId2
+  , channelAnnNodeId2     = testNodeId
+  , channelAnnBitcoinKey1 = testPoint
+  , channelAnnBitcoinKey2 = testPoint
+  }
+
+-- | Replace the byte at an offset (no-op past the end).
+setByte :: Int -> Word8 -> BS.ByteString -> BS.ByteString
+setByte i w bs
+  | i < 0 || i >= BS.length bs = bs
+  | otherwise = BS.take i bs <> BS.singleton w <> BS.drop (i + 1) bs
 
 -- Type Tests ------------------------------------------------------------------
 
@@ -154,10 +212,11 @@ channel_announcement_tests = testGroup "ChannelAnnouncement" [
             , channelAnnBitcoinKey1  = testPoint
             , channelAnnBitcoinKey2  = testPoint
             }
-          encoded = encodeChannelAnnouncement msg
-      case decodeChannelAnnouncement encoded of
-        Right (decoded, _) -> decoded @?= msg
-        Left e -> assertFailure $ "decode failed: " ++ show e
+      case encodeChannelAnnouncement msg of
+        Left e -> assertFailure $ "encode failed: " ++ show e
+        Right encoded -> case decodeChannelAnnouncement encoded of
+          Right (decoded, _) -> decoded @?= msg
+          Left e -> assertFailure $ "decode failed: " ++ show e
   ]
 
 -- Node Announcement Tests -----------------------------------------------------
@@ -195,13 +254,85 @@ node_announcement_tests = testGroup "NodeAnnouncement" [
         Right encoded -> case decodeNodeAnnouncement encoded of
           Right (decoded, _) -> decoded @?= msg
           Left e -> assertFailure $ "decode failed: " ++ show e
+  , testGroup "address descriptors" [
+      testCase "skips deprecated Tor v2 descriptors" $ do
+        v4 <- addrV4
+        v6 <- addrV6
+        decodeAddrs (descV4 <> descTorV2 <> descV6) @?= Right [v4, v6]
+    , testCase "stops at the first unknown type" $ do
+        v4 <- addrV4
+        let wire = descV4 <> BS.pack [6, 1, 2, 3] <> descV6
+        decodeAddrs wire @?= Right [v4]
+        -- the ignored bytes are still consumed as part of addrlen
+        fmap snd (decodeNodeAnnouncement (nodeAnnWire wire))
+          @?= Right BS.empty
+    , testCase "stops at a type-0 descriptor" $
+        decodeAddrs (BS.singleton 0 <> descV4) @?= Right []
+    , testCase "skips descriptors with port 0" $ do
+        v6 <- addrV6
+        let v4port0 = BS.pack [1, 127, 0, 0, 1, 0, 0]
+        decodeAddrs (v4port0 <> descV6) @?= Right [v6]
+    , testCase "skips empty and non-ASCII hostnames" $ do
+        h <- expectJust "hostname" (hostname "ln.example.com")
+        let wire = descDns "" <> descDns "\xff\&ab"
+              <> descDns "ln.example.com"
+        decodeAddrs wire @?= Right [AddrDNS h 9735]
+    , testCase "rejects a truncated descriptor of a known type" $ do
+        decodeAddrs (BS.pack [1, 127, 0, 0])
+          @?= Left DecodeInsufficientBytes
+        decodeAddrs (BS.pack [3, 1, 2, 3])
+          @?= Left DecodeInsufficientBytes
+        decodeAddrs (BS.pack [5, 4, 0x61])
+          @?= Left DecodeInsufficientBytes
+    , testCase "hostname rejects non-ASCII bytes" $ do
+        hostname "\0\255" @?= Nothing
+        hostname "caf\233" @?= Nothing
+        fmap getHostname (hostname "xn--caf-dma") @?= Just "xn--caf-dma"
+    ]
   ]
+
+-- | node_announcement payload carrying the given address bytes.
+nodeAnnWire :: BS.ByteString -> BS.ByteString
+nodeAnnWire addrs = mconcat
+  [ BS.replicate 64 0xee              -- signature
+  , BS.pack [0, 0]                    -- flen
+  , BS.pack [0x49, 0x96, 0x02, 0xd2]  -- timestamp
+  , getNodeId testNodeId
+  , getRgbColor testRgbColor
+  , getAlias testAlias
+  , u16be (BS.length addrs)
+  , addrs
+  ]
+
+-- | Decode the addresses of a node_announcement built by 'nodeAnnWire'.
+decodeAddrs :: BS.ByteString -> Either DecodeError [Address]
+decodeAddrs = fmap (nodeAnnAddresses . fst) . decodeNodeAnnouncement
+  . nodeAnnWire
+
+-- | Big-endian u16 (low 16 bits).
+u16be :: Int -> BS.ByteString
+u16be n = BS.pack [fromIntegral (n `div` 256), fromIntegral n]
+
+-- | Address descriptors (port 9735) and the values they decode to.
+descV4, descV6, descTorV2 :: BS.ByteString
+descV4 = BS.pack [1, 127, 0, 0, 1, 0x26, 0x07]
+descV6 = BS.pack (2 : replicate 15 0 ++ [1, 0x26, 0x07])
+descTorV2 = BS.cons 3 (BS.replicate 12 0xaa)
+
+descDns :: BS.ByteString -> BS.ByteString
+descDns h = BS.pack [5, fromIntegral (BS.length h)] <> h <> u16be 9735
+
+addrV4, addrV6 :: IO Address
+addrV4 = fmap (`AddrIPv4` 9735)
+  (expectJust "ipv4" (ipv4Addr (BS.pack [127, 0, 0, 1])))
+addrV6 = fmap (`AddrIPv6` 9735)
+  (expectJust "ipv6" (ipv6Addr (BS.pack (replicate 15 0 ++ [1]))))
 
 -- Channel Update Tests --------------------------------------------------------
 
 channel_update_tests :: TestTree
 channel_update_tests = testGroup "ChannelUpdate" [
-    testCase "encode/decode roundtrip without htlc_maximum_msat" $ do
+    testCase "encode/decode roundtrip (NodeTwo)" $ do
       let msg = ChannelUpdate
             { chanUpdateSignature      = testSignature
             , chanUpdateChainHash      = testChainHash
@@ -213,13 +344,13 @@ channel_update_tests = testGroup "ChannelUpdate" [
             , chanUpdateHtlcMinMsat    = HtlcMinimumMsat 1000
             , chanUpdateFeeBaseMsat    = FeeBaseMsat 1000
             , chanUpdateFeeProportional = FeeProportionalMillionths 100
-            , chanUpdateHtlcMaxMsat    = Nothing
+            , chanUpdateHtlcMaxMsat    = HtlcMaximumMsat 1000000000
             }
           encoded = encodeChannelUpdate msg
       case decodeChannelUpdate encoded of
         Right (decoded, _) -> decoded @?= msg
         Left e -> assertFailure $ "decode failed: " ++ show e
-  , testCase "encode/decode roundtrip with htlc_maximum_msat" $ do
+  , testCase "encode/decode roundtrip (NodeOne)" $ do
       let msg = ChannelUpdate
             { chanUpdateSignature      = testSignature
             , chanUpdateChainHash      = testChainHash
@@ -231,12 +362,28 @@ channel_update_tests = testGroup "ChannelUpdate" [
             , chanUpdateHtlcMinMsat    = HtlcMinimumMsat 1000
             , chanUpdateFeeBaseMsat    = FeeBaseMsat 500
             , chanUpdateFeeProportional = FeeProportionalMillionths 50
-            , chanUpdateHtlcMaxMsat    = Just (HtlcMaximumMsat 1000000000)
+            , chanUpdateHtlcMaxMsat    = HtlcMaximumMsat 1000000000
             }
           encoded = encodeChannelUpdate msg
       case decodeChannelUpdate encoded of
         Right (decoded, _) -> decoded @?= msg
         Left e -> assertFailure $ "decode failed: " ++ show e
+  , testCase "encoder sets must_be_one and emits htlc_maximum_msat" $ do
+      let encoded = encodeChannelUpdate testChannelUpdate
+      BS.length encoded @?= 136
+      BS.take 1 (BS.drop 108 encoded) @?= BS.singleton 0x01
+      BS.drop 128 encoded @?= BS.pack [0, 0, 0, 0, 0x3b, 0x9a, 0xca, 0]
+  , testCase "decodes htlc_maximum_msat when must_be_one is clear" $ do
+      -- receivers ignore must_be_one; the field is always present
+      let wire = setByte 108 0x00 (encodeChannelUpdate testChannelUpdate)
+      case decodeChannelUpdate wire of
+        Right (decoded, rest) -> do
+          decoded @?= testChannelUpdate
+          rest @?= BS.empty
+        Left e -> assertFailure $ "decode failed: " ++ show e
+  , testCase "rejects update without htlc_maximum_msat" $ do
+      let wire = BS.take 128 (encodeChannelUpdate testChannelUpdate)
+      decodeChannelUpdate wire @?= Left DecodeInsufficientBytes
   ]
 
 -- Announcement Signatures Tests -----------------------------------------------
@@ -335,6 +482,58 @@ query_tests = testGroup "Query Messages" [
           Right (decoded, _) -> decoded @?= msg
           Left e -> assertFailure $ "decode failed: " ++ show e
     ]
+  , tlvStreamTests "query_short_channel_ids TLVs" [1] $ \tlvs ->
+      fmap (unTlvStream . queryScidsTlvs . fst)
+        (decodeQueryShortChannelIds (mconcat
+          [ unChainHash testChainHash
+          , u16be 9
+          , encodeShortChannelIdList [testShortChannelId]
+          , tlvs
+          ]))
+  , tlvStreamTests "query_channel_range TLVs" [1] $ \tlvs ->
+      fmap (unTlvStream . queryRangeTlvs . fst)
+        (decodeQueryChannelRange (mconcat
+          [ unChainHash testChainHash
+          , BS.pack [0, 9, 0x27, 0xc0]  -- first_blocknum 600000
+          , BS.pack [0, 0, 0x27, 0x10]  -- number_of_blocks 10000
+          , tlvs
+          ]))
+  , tlvStreamTests "reply_channel_range TLVs" [1, 3] $ \tlvs ->
+      fmap (unTlvStream . replyRangeTlvs . fst)
+        (decodeReplyChannelRange (mconcat
+          [ unChainHash testChainHash
+          , BS.pack [0, 9, 0x27, 0xc0]  -- first_blocknum 600000
+          , BS.pack [0, 0, 0x27, 0x10]  -- number_of_blocks 10000
+          , BS.singleton 1              -- sync_complete
+          , u16be 9
+          , encodeShortChannelIdList [testShortChannelId]
+          , tlvs
+          ]))
+  ]
+
+-- | TLV stream tests for a query decoder, given its known TLV types
+-- and a function decoding a message that ends in the given TLV bytes.
+tlvStreamTests
+  :: String
+  -> [Word8]
+  -> (BS.ByteString -> Either DecodeError [TlvRecord])
+  -> TestTree
+tlvStreamTests name known dec = testGroup name [
+    testCase "empty stream" $
+      dec BS.empty @?= Right []
+  , testCase "keeps known types" $
+      dec (BS.pack (concatMap (\t -> [t, 1, 0x2a]) known))
+        @?= Right [TlvRecord (fromIntegral t) "\x2a" | t <- known]
+  , testCase "skips unknown odd types" $
+      dec (BS.pack [5, 0]) @?= Right []
+  , testCase "rejects unknown even types" $
+      dec (BS.pack [2, 0]) @?= Left DecodeTlvError
+  , testCase "rejects a length past the end" $
+      dec (BS.pack [1, 5, 0xaa]) @?= Left DecodeTlvError
+  , testCase "rejects repeated types" $
+      dec (BS.pack [1, 0, 1, 0]) @?= Left DecodeTlvError
+  , testCase "rejects a non-minimal BigSize" $
+      dec (BS.pack [0xfd, 0x00, 0x01, 0x00]) @?= Left DecodeTlvError
   ]
 
 -- SCID List Tests ------------------------------------------------------------
@@ -390,7 +589,7 @@ hash_tests = testGroup "Hash Functions" [
   , testGroup "Signature Hashes" [
       testCase "channelAnnouncementHash produces 32 bytes" $ do
         -- Create a minimal valid encoded message
-        let msg = encodeChannelAnnouncement ChannelAnnouncement
+        case encodeChannelAnnouncement ChannelAnnouncement
               { channelAnnNodeSig1    = testSignature
               , channelAnnNodeSig2    = testSignature
               , channelAnnBitcoinSig1 = testSignature
@@ -402,9 +601,11 @@ hash_tests = testGroup "Hash Functions" [
               , channelAnnNodeId2     = testNodeId2
               , channelAnnBitcoinKey1 = testPoint
               , channelAnnBitcoinKey2 = testPoint
-              }
-            hashVal = channelAnnouncementHash msg
-        BS.length hashVal @?= 32
+              } of
+          Left e -> assertFailure $ "encode failed: " ++ show e
+          Right msg -> do
+            let hashVal = channelAnnouncementHash msg
+            fmap BS.length hashVal @?= Just 32
     , testCase "nodeAnnouncementHash produces 32 bytes" $ do
         case encodeNodeAnnouncement NodeAnnouncement
               { nodeAnnSignature = testSignature
@@ -418,7 +619,7 @@ hash_tests = testGroup "Hash Functions" [
           Left e -> assertFailure $ "encode failed: " ++ show e
           Right msg -> do
             let hashVal = nodeAnnouncementHash msg
-            BS.length hashVal @?= 32
+            fmap BS.length hashVal @?= Just 32
     , testCase "channelUpdateHash produces 32 bytes" $ do
         let msg = encodeChannelUpdate ChannelUpdate
               { chanUpdateSignature       = testSignature
@@ -432,10 +633,10 @@ hash_tests = testGroup "Hash Functions" [
               , chanUpdateHtlcMinMsat     = HtlcMinimumMsat 1000
               , chanUpdateFeeBaseMsat     = FeeBaseMsat 1000
               , chanUpdateFeeProportional = FeeProportionalMillionths 100
-              , chanUpdateHtlcMaxMsat     = Nothing
+              , chanUpdateHtlcMaxMsat     = HtlcMaximumMsat 1000000000
               }
             hashVal = channelUpdateHash msg
-        BS.length hashVal @?= 32
+        fmap BS.length hashVal @?= Just 32
     ]
   , testGroup "Checksum" [
       testCase "channelUpdateChecksum produces consistent result" $ do
@@ -452,7 +653,7 @@ hash_tests = testGroup "Hash Functions" [
               , chanUpdateHtlcMinMsat     = HtlcMinimumMsat 1000
               , chanUpdateFeeBaseMsat     = FeeBaseMsat 1000
               , chanUpdateFeeProportional = FeeProportionalMillionths 100
-              , chanUpdateHtlcMaxMsat     = Nothing
+              , chanUpdateHtlcMaxMsat     = HtlcMaximumMsat 1000000000
               }
             cs1 = channelUpdateChecksum msg
             cs2 = channelUpdateChecksum msg
@@ -471,7 +672,7 @@ hash_tests = testGroup "Hash Functions" [
               , chanUpdateHtlcMinMsat     = HtlcMinimumMsat 1000
               , chanUpdateFeeBaseMsat     = FeeBaseMsat 1000
               , chanUpdateFeeProportional = FeeProportionalMillionths 100
-              , chanUpdateHtlcMaxMsat     = Nothing
+              , chanUpdateHtlcMaxMsat     = HtlcMaximumMsat 1000000000
               }
             msg2 = encodeChannelUpdate ChannelUpdate
               { chanUpdateSignature       = testSignature
@@ -485,9 +686,40 @@ hash_tests = testGroup "Hash Functions" [
               , chanUpdateHtlcMinMsat     = HtlcMinimumMsat 1000
               , chanUpdateFeeBaseMsat     = FeeBaseMsat 1000
               , chanUpdateFeeProportional = FeeProportionalMillionths 100
-              , chanUpdateHtlcMaxMsat     = Nothing
+              , chanUpdateHtlcMaxMsat     = HtlcMaximumMsat 1000000000
               }
         channelUpdateChecksum msg1 @?= channelUpdateChecksum msg2
+    ]
+  , testGroup "Input length" [
+      testCase "channel_update needs 136 bytes" $ do
+        let wire = encodeChannelUpdate testChannelUpdate
+        channelUpdateHash (BS.take 135 wire) @?= Nothing
+        channelUpdateChecksum (BS.take 135 wire) @?= Nothing
+        channelUpdateChecksum "short" @?= Nothing
+        fmap BS.length (channelUpdateHash wire) @?= Just 32
+        assertBool "checksum" (channelUpdateChecksum wire /= Nothing)
+    , testCase "channel_announcement needs its declared features" $
+        case encodeChannelAnnouncement
+               (testChannelAnn (featureBits (BS.pack [1, 2]))) of
+          Left e -> assertFailure $ "encode failed: " ++ show e
+          Right wire -> do
+            fmap BS.length (channelAnnouncementHash wire) @?= Just 32
+            channelAnnouncementHash (BS.take (BS.length wire - 1) wire)
+              @?= Nothing
+            -- claim one more feature byte than present
+            channelAnnouncementHash (setByte 257 3 wire) @?= Nothing
+            channelAnnouncementHash (BS.take 257 wire) @?= Nothing
+    , testCase "node_announcement needs its declared addresses" $ do
+        v4 <- addrV4
+        case encodeNodeAnnouncement (testNodeAnn [v4]) of
+          Left e -> assertFailure $ "encode failed: " ++ show e
+          Right wire -> do
+            fmap BS.length (nodeAnnouncementHash wire) @?= Just 32
+            nodeAnnouncementHash (BS.take (BS.length wire - 1) wire)
+              @?= Nothing
+            -- claim one more address byte than present (addrlen 8)
+            nodeAnnouncementHash (setByte 139 8 wire) @?= Nothing
+            nodeAnnouncementHash (BS.take 139 wire) @?= Nothing
     ]
   ]
 
@@ -527,6 +759,19 @@ validation_tests = testGroup "Validation" [
               }
         validateChannelAnnouncement msg @?= Left ValidateNodeIdOrdering
     ]
+  , testGroup "NodeAnnouncement" [
+      testCase "one DNS hostname passes" $ do
+        h <- expectJust "hostname" (hostname "ln.example.com")
+        v4 <- addrV4
+        validateNodeAnnouncement (testNodeAnn [v4, AddrDNS h 9735])
+          @?= Right ()
+    , testCase "rejects more than one DNS hostname" $ do
+        h1 <- expectJust "hostname" (hostname "a.example.com")
+        h2 <- expectJust "hostname" (hostname "b.example.com")
+        validateNodeAnnouncement
+          (testNodeAnn [AddrDNS h1 9735, AddrDNS h2 9735])
+          @?= Left ValidateMultipleDns
+    ]
   , testGroup "ChannelUpdate" [
       testCase "valid update passes" $ do
         let msg = ChannelUpdate
@@ -541,7 +786,7 @@ validation_tests = testGroup "Validation" [
               , chanUpdateHtlcMinMsat     = HtlcMinimumMsat 1000
               , chanUpdateFeeBaseMsat     = FeeBaseMsat 1000
               , chanUpdateFeeProportional = FeeProportionalMillionths 100
-              , chanUpdateHtlcMaxMsat     = Just (HtlcMaximumMsat 1000000000)
+              , chanUpdateHtlcMaxMsat     = HtlcMaximumMsat 1000000000
               }
         validateChannelUpdate msg @?= Right ()
     , testCase "rejects htlc_min > htlc_max" $ do
@@ -557,7 +802,7 @@ validation_tests = testGroup "Validation" [
               , chanUpdateHtlcMinMsat     = HtlcMinimumMsat 2000000000  -- > htlcMax
               , chanUpdateFeeBaseMsat     = FeeBaseMsat 1000
               , chanUpdateFeeProportional = FeeProportionalMillionths 100
-              , chanUpdateHtlcMaxMsat     = Just (HtlcMaximumMsat 1000000000)
+              , chanUpdateHtlcMaxMsat     = HtlcMaximumMsat 1000000000
               }
         validateChannelUpdate msg @?= Left ValidateHtlcAmounts
     ]
@@ -579,7 +824,40 @@ validation_tests = testGroup "Validation" [
               }
         validateQueryChannelRange msg @?= Left ValidateBlockOverflow
     ]
+  , testGroup "ReplyChannelRange" [
+      testCase "ascending short_channel_ids pass" $
+        validateReplyChannelRange (testReplyRange
+          (encodeShortChannelIdList [mkScid 1 0 0, mkScid 2 0 0]))
+          @?= Right ()
+    , testCase "rejects descending short_channel_ids" $
+        validateReplyChannelRange (testReplyRange
+          (encodeShortChannelIdList [mkScid 2 0 0, mkScid 1 0 0]))
+          @?= Left ValidateScidNotAscending
+    , testCase "rejects zlib encoding (type 1)" $
+        validateReplyChannelRange (testReplyRange (BS.cons 1
+          (scidToBytes (mkScid 2 0 0) <> scidToBytes (mkScid 1 0 0))))
+          @?= Left ValidateScidEncoding
+    , testCase "rejects an unknown encoding type" $
+        validateReplyChannelRange (testReplyRange (BS.cons 2
+          (scidToBytes (mkScid 1 0 0))))
+          @?= Left ValidateScidEncoding
+    , testCase "rejects a partial short_channel_id" $
+        validateReplyChannelRange (testReplyRange (BS.cons 0
+          (scidToBytes (mkScid 1 0 0) <> BS.replicate 7 0)))
+          @?= Left ValidateScidEncoding
+    ]
   ]
+
+-- | A reply_channel_range fixture with the given encoded_short_ids.
+testReplyRange :: BS.ByteString -> ReplyChannelRange
+testReplyRange scids = ReplyChannelRange
+  { replyRangeChainHash    = testChainHash
+  , replyRangeFirstBlock   = BlockHeight 0
+  , replyRangeNumBlocks    = BlockCount 10
+  , replyRangeSyncComplete = 1
+  , replyRangeData         = scids
+  , replyRangeTlvs         = emptyTlvs
+  }
 
 -- Error Tests -----------------------------------------------------------------
 
@@ -603,6 +881,223 @@ error_tests = testGroup "Error Conditions" [
           Left DecodeInsufficientBytes -> pure ()
           other -> assertFailure $ "expected insufficient: " ++ show other
     ]
+  , testGroup "Length overflow" [
+      testCase "channel_announcement features" $ do
+        let feats n = featureBits (BS.replicate n 0x01)
+        encodeChannelAnnouncement (testChannelAnn (feats 65536))
+          @?= Left EncodeLengthOverflow
+        case encodeChannelAnnouncement (testChannelAnn (feats 65535)) of
+          Left e -> assertFailure $ "encode failed: " ++ show e
+          Right wire -> fmap fst (decodeChannelAnnouncement wire)
+            @?= Right (testChannelAnn (feats 65535))
+    , testCase "node_announcement features" $ do
+        let msg = (testNodeAnn [])
+              { nodeAnnFeatures = featureBits (BS.replicate 65536 0x01) }
+        encodeNodeAnnouncement msg @?= Left EncodeLengthOverflow
+    , testCase "node_announcement addresses" $ do
+        v4 <- addrV4
+        -- 10923 IPv4 descriptors take 65538 bytes
+        encodeNodeAnnouncement (testNodeAnn (replicate 10923 v4))
+          @?= Left EncodeLengthOverflow
+        case encodeNodeAnnouncement (testNodeAnn (replicate 9362 v4)) of
+          Left e -> assertFailure $ "encode failed: " ++ show e
+          Right wire -> fmap (length . nodeAnnAddresses . fst)
+            (decodeNodeAnnouncement wire) @?= Right 9362
+    , testCase "query_short_channel_ids encoded_short_ids" $ do
+        let msg = QueryShortChannelIds
+              { queryScidsChainHash = testChainHash
+              , queryScidsData      = BS.replicate 65536 0x00
+              , queryScidsTlvs      = emptyTlvs
+              }
+        encodeQueryShortChannelIds msg @?= Left EncodeLengthOverflow
+    , testCase "reply_channel_range encoded_short_ids" $ do
+        let msg = ReplyChannelRange
+              { replyRangeChainHash    = testChainHash
+              , replyRangeFirstBlock   = BlockHeight 600000
+              , replyRangeNumBlocks    = BlockCount 10000
+              , replyRangeSyncComplete = 1
+              , replyRangeData         = BS.replicate 65536 0x00
+              , replyRangeTlvs         = emptyTlvs
+              }
+        encodeReplyChannelRange msg @?= Left EncodeLengthOverflow
+    ]
+  ]
+
+-- Mainnet Gossip Tests --------------------------------------------------------
+
+-- Real mainnet gossip for short_channel_id 850052x2992x1: its
+-- channel_announcement and one channel_update per direction. Payloads
+-- exclude the 2-byte message type. The digests and checksums were
+-- computed independently of this library.
+
+mainnet_tests :: TestTree
+mainnet_tests = testGroup "Mainnet gossip" [
+    testCase "fixtures decode from hex" $ do
+      BS.length mainnetChanAnn @?= 430
+      BS.length mainnetUpdate136 @?= 136
+      BS.length mainnetUpdate148 @?= 148
+  , testGroup "channel_announcement" [
+      testCase "decodes" $ do
+        (ann, rest) <- expectRight "decode"
+          (decodeChannelAnnouncement mainnetChanAnn)
+        rest @?= BS.empty
+        formatScid (channelAnnShortChanId ann) @?= "850052x2992x1"
+        channelAnnChainHash ann @?= mainnetChainHash
+        getFeatureBits (channelAnnFeatures ann) @?= BS.empty
+        getNodeId (channelAnnNodeId1 ann) @?= mainnetNodeId1
+        getNodeId (channelAnnNodeId2 ann) @?= mainnetNodeId2
+        validateChannelAnnouncement ann @?= Right ()
+    , testCase "re-encodes byte-exact" $ do
+        (ann, _) <- expectRight "decode"
+          (decodeChannelAnnouncement mainnetChanAnn)
+        encodeChannelAnnouncement ann @?= Right mainnetChanAnn
+    , testCase "signature hash" $
+        channelAnnouncementHash mainnetChanAnn @?= Just (hex
+          "3dc0e5a431551c44f2afd49cda2d3bf2a5f1b9cc86ef93db8953c17dd1ef4ded")
+    , testCase "all four signatures verify" $ do
+        (ann, _) <- expectRight "decode"
+          (decodeChannelAnnouncement mainnetChanAnn)
+        h <- expectJust "hash" (channelAnnouncementHash mainnetChanAnn)
+        let nid = getNodeId
+            btc = unPoint
+        assertBool "node_sig_1" $
+          verifySig h (nid (channelAnnNodeId1 ann)) (channelAnnNodeSig1 ann)
+        assertBool "node_sig_2" $
+          verifySig h (nid (channelAnnNodeId2 ann)) (channelAnnNodeSig2 ann)
+        assertBool "bitcoin_sig_1" $
+          verifySig h (btc (channelAnnBitcoinKey1 ann))
+            (channelAnnBitcoinSig1 ann)
+        assertBool "bitcoin_sig_2" $
+          verifySig h (btc (channelAnnBitcoinKey2 ann))
+            (channelAnnBitcoinSig2 ann)
+        assertBool "node_sig_1 does not verify under node_id_2" $
+          not (verifySig h (nid (channelAnnNodeId2 ann))
+                 (channelAnnNodeSig1 ann))
+    ]
+  , testGroup "channel_update (136 bytes)" [
+      testCase "decodes" $ do
+        (upd, rest) <- expectRight "decode"
+          (decodeChannelUpdate mainnetUpdate136)
+        rest @?= BS.empty
+        formatScid (chanUpdateShortChanId upd) @?= "850052x2992x1"
+        chanUpdateChainHash upd @?= mainnetChainHash
+        chanUpdateTimestamp upd @?= 1776493010
+        chanUpdateChanFlags upd @?= ChannelFlags NodeTwo Disabled
+        chanUpdateCltvExpDelta upd @?= CltvExpiryDelta 80
+        chanUpdateHtlcMinMsat upd @?= HtlcMinimumMsat 1000
+        chanUpdateFeeBaseMsat upd @?= FeeBaseMsat 1000
+        chanUpdateFeeProportional upd @?= FeeProportionalMillionths 800
+        chanUpdateHtlcMaxMsat upd @?= HtlcMaximumMsat 2970000000
+        validateChannelUpdate upd @?= Right ()
+    , testCase "re-encodes byte-exact" $ do
+        (upd, _) <- expectRight "decode"
+          (decodeChannelUpdate mainnetUpdate136)
+        encodeChannelUpdate upd @?= mainnetUpdate136
+    , testCase "signature hash" $
+        channelUpdateHash mainnetUpdate136 @?= Just (hex
+          "5c9960b6fef9fa0d53073895420159e856c7c5f33fdeb694b163a832efe6b8e3")
+    , testCase "signature verifies under node_id_2" $ do
+        (upd, _) <- expectRight "decode"
+          (decodeChannelUpdate mainnetUpdate136)
+        h <- expectJust "hash" (channelUpdateHash mainnetUpdate136)
+        let sig = chanUpdateSignature upd
+        assertBool "node_id_2" (verifySig h mainnetNodeId2 sig)
+        assertBool "not node_id_1" (not (verifySig h mainnetNodeId1 sig))
+    , testCase "checksum" $
+        channelUpdateChecksum mainnetUpdate136 @?= Just 0x1da953bd
+    ]
+  , testGroup "channel_update (148 bytes, with extension)" [
+      testCase "decodes, leaving the extension as rest" $ do
+        (upd, rest) <- expectRight "decode"
+          (decodeChannelUpdate mainnetUpdate148)
+        -- an LND inbound-fee TLV (type 55555) after htlc_maximum_msat
+        rest @?= hex "fdd9030800000000ffffffed"
+        chanUpdateTimestamp upd @?= 1779047542
+        chanUpdateChanFlags upd @?= ChannelFlags NodeOne Enabled
+        chanUpdateCltvExpDelta upd @?= CltvExpiryDelta 100
+        chanUpdateHtlcMinMsat upd @?= HtlcMinimumMsat 1000
+        chanUpdateFeeBaseMsat upd @?= FeeBaseMsat 0
+        chanUpdateFeeProportional upd @?= FeeProportionalMillionths 5000
+        chanUpdateHtlcMaxMsat upd @?= HtlcMaximumMsat 2970000000
+    , testCase "re-encodes the fixed fields byte-exact" $ do
+        -- the record does not keep extension bytes
+        (upd, rest) <- expectRight "decode"
+          (decodeChannelUpdate mainnetUpdate148)
+        encodeChannelUpdate upd <> rest @?= mainnetUpdate148
+    , testCase "signature hash covers the extension" $
+        channelUpdateHash mainnetUpdate148 @?= Just (hex
+          "b1989933c26561ab2cdcc49b471aee5f6e0403a5eb7b88a908cb19cfee0556b9")
+    , testCase "signature verifies under node_id_1" $ do
+        (upd, _) <- expectRight "decode"
+          (decodeChannelUpdate mainnetUpdate148)
+        h <- expectJust "hash" (channelUpdateHash mainnetUpdate148)
+        let sig = chanUpdateSignature upd
+        assertBool "node_id_1" (verifySig h mainnetNodeId1 sig)
+        assertBool "not node_id_2" (not (verifySig h mainnetNodeId2 sig))
+    , testCase "checksum includes the extension" $
+        channelUpdateChecksum mainnetUpdate148 @?= Just 0xf0a89fda
+    ]
+  ]
+
+-- | Unwrap an Either, failing the test on Left.
+expectRight :: Show e => String -> Either e a -> IO a
+expectRight what =
+  either (\e -> assertFailure (what ++ " failed: " ++ show e)) pure
+
+-- | Decode hex (empty on malformed input; the fixture length test
+-- catches that).
+hex :: BS.ByteString -> BS.ByteString
+hex = maybe BS.empty id . B16.decode
+
+-- | Verify a compact ECDSA signature over a digest.
+verifySig :: BS.ByteString -> BS.ByteString -> Signature -> Bool
+verifySig digest pub sig =
+  case (Secp256k1.parse_point pub, Secp256k1.parse_sig (unSignature sig)) of
+    (Just p, Just s) -> Secp256k1._verify_ecdsa_no_hash digest p s
+    _ -> False
+
+mainnetNodeId1, mainnetNodeId2 :: BS.ByteString
+mainnetNodeId1 = hex
+  "02bb5e47ee26aca1654ce092d9d06eac15d953210c737f2220e2d7e54c4f108677"
+mainnetNodeId2 = hex
+  "030b828fd1e42549fbc2f1d0960ec3663362c41777d3d87fe1b8e1d4bf063abcaa"
+
+mainnetChanAnn :: BS.ByteString
+mainnetChanAnn = hex $ mconcat
+  [ "3c256c270126d2c52ab5464fa959d627e9baec8c76bd2b81d34b47c4efb03290"
+  , "40126ea7a0f8d31420976dc28ff684dc63f62620fa10dbac4fe3d417ca5690c1"
+  , "b7fe1de61f5dd2b8368886d6c98f625c9110198e57c14fac93d4eff34e19ce5f"
+  , "5dc6fef4501e8105c8f9b82d6d0b348f5840864445b071ae7a741b5eb92d2ec0"
+  , "ab85681e4e1e85144bbbd8757c14cee92468d2c5ac84345cb28931b6fed5e339"
+  , "00ed9dd363db630f31248cfa933a3667cbf87bb78a48a442e81c652686355365"
+  , "ff33164c7588f0a753d50c4d52dd4a81c611fa47b4e950dfc9e3379a12ef7834"
+  , "781c0900b90f56a5a49893446d03c8d283c3c093e3c8c682ff6cb40d70d9eebc"
+  , "00006fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d619000000"
+  , "00000cf884000bb0000102bb5e47ee26aca1654ce092d9d06eac15d953210c73"
+  , "7f2220e2d7e54c4f108677030b828fd1e42549fbc2f1d0960ec3663362c41777"
+  , "d3d87fe1b8e1d4bf063abcaa02bc3f260955062a4f427704edef1864c76d6777"
+  , "fe81bed43a5f6297dda1c7ca9203523e164f4f9fbdea978c6570d56b13ca8338"
+  , "430e6794ff74cf6aa0dbda71dd2d"
+  ]
+
+-- | Direction 1, disabled.
+mainnetUpdate136 :: BS.ByteString
+mainnetUpdate136 = hex $ mconcat
+  [ "261e3d1f1b77b4a606c20dbe5b395e35703adc82fd9320b88e892f51547b93e9"
+  , "060f793d8cfd93d2063060a692c31749d0eb3dd351f3e4bbc562d00f89472a42"
+  , "6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000"
+  , "0cf884000bb0000169e321d20103005000000000000003e8000003e800000320"
+  , "00000000b1069a80"
+  ]
+
+-- | Direction 0, enabled, with a 12-byte extension.
+mainnetUpdate148 :: BS.ByteString
+mainnetUpdate148 = hex $ mconcat
+  [ "1c3f0859cb3f4494919c3dcc80d22bbf1e25e378bd95f071530833c2371c33d7"
+  , "0766012ebef1cd79b299a54d0d29bea2ef6feca1d6cfa188864c95d7eea7e9a4"
+  , "6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000"
+  , "0cf884000bb000016a0a1c760100006400000000000003e80000000000001388"
+  , "00000000b1069a80fdd9030800000000ffffffed"
   ]
 
 -- Property Tests --------------------------------------------------------------
@@ -641,10 +1136,11 @@ propChannelAnnouncementRoundtrip = property $ do
         , channelAnnBitcoinKey1  = testPoint
         , channelAnnBitcoinKey2  = testPoint
         }
-      encoded = encodeChannelAnnouncement msg
-  case decodeChannelAnnouncement encoded of
-    Right (decoded, _) -> decoded == msg
+  case encodeChannelAnnouncement msg of
     Left _ -> False
+    Right encoded -> case decodeChannelAnnouncement encoded of
+      Right (decoded, _) -> decoded == msg
+      Left _ -> False
 
 -- Property: ChannelUpdate roundtrip
 propChannelUpdateRoundtrip :: Word32 -> Word16 -> Property
@@ -661,7 +1157,7 @@ propChannelUpdateRoundtrip timestamp cltvDelta = property $ do
         , chanUpdateHtlcMinMsat    = HtlcMinimumMsat 1000
         , chanUpdateFeeBaseMsat    = FeeBaseMsat 1000
         , chanUpdateFeeProportional = FeeProportionalMillionths 100
-        , chanUpdateHtlcMaxMsat    = Nothing
+        , chanUpdateHtlcMaxMsat    = HtlcMaximumMsat 1000000000
         }
       encoded = encodeChannelUpdate msg
   case decodeChannelUpdate encoded of

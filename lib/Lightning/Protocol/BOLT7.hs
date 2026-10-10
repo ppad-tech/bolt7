@@ -55,12 +55,15 @@
 --
 -- == Signature verification
 --
--- This library provides hash computation for signature verification:
+-- This library provides hash computation for signature verification.
+-- The hash functions take the received payload (the bytes after the
+-- 2-byte message type):
 --
 -- @
 -- -- Compute the hash that should be signed
--- let sigHash = channelAnnouncementHash encodedMessage
--- -- Verify signatures using ppad-secp256k1 (not included)
+-- case channelAnnouncementHash payload of
+--   Nothing -> rejectMessage  -- too short to be a channel_announcement
+--   Just sigHash -> verifyWith sigHash  -- e.g. using ppad-secp256k1
 -- @
 --
 -- = Protocol overview

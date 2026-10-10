@@ -324,11 +324,12 @@ torV3Addr !bs
   | otherwise = Nothing
 {-# INLINE torV3Addr #-}
 
--- | DNS hostname (1-255 bytes).
+-- | DNS hostname (1-255 ASCII bytes).
 --
 -- Per BOLT #7 address descriptor type 5, the hostname is
--- a length-prefixed DNS name. The length byte limits it to
--- 255 bytes.
+-- a length-prefixed DNS name whose bytes MUST be ASCII
+-- (non-ASCII names are Punycode-encoded). The length byte
+-- limits it to 255 bytes.
 newtype Hostname = Hostname { getHostname :: ByteString }
   deriving (Eq, Show, Generic)
 
@@ -336,12 +337,13 @@ instance NFData Hostname
 
 -- | Smart constructor for Hostname.
 --
--- Returns Nothing if the hostname is empty or exceeds
--- 255 bytes.
+-- Returns Nothing if the hostname is empty, exceeds 255
+-- bytes, or contains a non-ASCII byte.
 hostname :: ByteString -> Maybe Hostname
 hostname !bs
   | BS.null bs = Nothing
   | BS.length bs > 255 = Nothing
+  | BS.any (> 0x7f) bs = Nothing
   | otherwise = Just (Hostname bs)
 {-# INLINE hostname #-}
 

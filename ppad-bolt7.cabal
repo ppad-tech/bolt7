@@ -53,6 +53,7 @@ test-suite bolt7-tests
     , ppad-base16
     , ppad-bolt1 >= 0.0.1 && < 0.1
     , ppad-bolt7
+    , ppad-secp256k1 >= 0.5.5 && < 0.6
     , tasty
     , tasty-hunit
     , tasty-quickcheck

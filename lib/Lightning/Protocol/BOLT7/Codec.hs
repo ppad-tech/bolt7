@@ -50,12 +50,11 @@ module Lightning.Protocol.BOLT7.Codec (
   ) where
 
 import Control.DeepSeq (NFData)
-import Data.Bits ((.&.))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Word (Word8, Word16, Word32, Word64)
 import GHC.Generics (Generic)
-import Lightning.Protocol.BOLT1 (unsafeTlvStream)
+import Lightning.Protocol.BOLT1 (TlvStream)
 import qualified Lightning.Protocol.BOLT1.Prim as Prim
 import qualified Lightning.Protocol.BOLT1.TLV as TLV
 import Lightning.Protocol.BOLT7.Messages
@@ -135,9 +134,14 @@ decodeLenPrefixed bs = do
     else Right (BS.splitAt n rest)
 {-# INLINE decodeLenPrefixed #-}
 
--- | Encode with u16 length prefix.
-encodeLenPrefixed :: ByteString -> ByteString
-encodeLenPrefixed bs = Prim.encodeU16 (fromIntegral $ BS.length bs) <> bs
+-- | Encode with u16 length prefix, failing if the length does not fit
+-- in a u16.
+encodeLenPrefixed :: ByteString -> Either EncodeError ByteString
+encodeLenPrefixed bs
+  | len > 65535 = Left EncodeLengthOverflow
+  | otherwise   = Right (Prim.encodeU16 (fromIntegral len) <> bs)
+  where
+    !len = BS.length bs
 {-# INLINE encodeLenPrefixed #-}
 
 -- | Decode fixed-length validated type.
@@ -149,6 +153,15 @@ decodeFixed len err mkVal bs = do
     Nothing -> Left err
     Just v  -> Right (v, rest)
 {-# INLINE decodeFixed #-}
+
+-- | Decode a TLV stream per BOLT #1, given the known types: a
+-- malformed stream or an unknown even type is an error, and unknown
+-- odd types are skipped.
+decodeTlvs :: [Word64] -> ByteString -> Either DecodeError TlvStream
+decodeTlvs known bs = case TLV.decodeTlvStreamWith (`elem` known) bs of
+  Left _  -> Left DecodeTlvError
+  Right t -> Right t
+{-# INLINE decodeTlvs #-}
 
 -- Type-specific decoders ------------------------------------------------------
 
@@ -202,6 +215,18 @@ decodeFeatureBits bs = do
 {-# INLINE decodeFeatureBits #-}
 
 -- | Decode addresses list (length-prefixed).
+--
+-- Follows the BOLT #7 receiver rules for address descriptors:
+--
+-- * parsing stops at the first descriptor of an unknown type, and
+--   the remaining address bytes are ignored;
+-- * deprecated Tor v2 descriptors (type 3) are skipped;
+-- * descriptors with port 0 are skipped;
+-- * DNS descriptors whose hostname is empty or not ASCII are
+--   skipped.
+--
+-- A descriptor of a known type that @addrlen@ cannot hold is a
+-- decoding error.
 decodeAddresses :: ByteString -> Either DecodeError ([Address], ByteString)
 decodeAddresses bs = do
   (addrData, rest) <- decodeLenPrefixed bs
@@ -212,59 +237,57 @@ decodeAddresses bs = do
     parseAddrs !d
       | BS.null d = Right []
       | otherwise = do
-          (addr, d') <- parseOneAddr d
-          addrs <- parseAddrs d'
-          Right (addr : addrs)
+          (typ, d1) <- decodeU8 d
+          case typ of
+            1 -> fixedAddr ipv4AddrLen (fmap AddrIPv4 . ipv4Addr) d1
+            2 -> fixedAddr ipv6AddrLen (fmap AddrIPv6 . ipv6Addr) d1
+            3 -> do  -- Tor v2 (deprecated; 10-byte onion + port)
+              (_, d2) <- decodeBytes 12 d1
+              parseAddrs d2
+            4 -> fixedAddr torV3AddrLen (fmap AddrTorV3 . torV3Addr) d1
+            5 -> do  -- DNS hostname
+              (hostLen, d2) <- decodeU8 d1
+              (hostBytes, d3) <- decodeBytes (fromIntegral hostLen) d2
+              (port, d4) <- decodeU16 d3
+              keep (fmap AddrDNS (hostname hostBytes)) port d4
+            _ -> Right []  -- unknown type: ignore the rest
 
-    parseOneAddr :: ByteString -> Either DecodeError (Address, ByteString)
-    parseOneAddr d = do
-      (typ, d1) <- decodeU8 d
-      case typ of
-        1 -> do  -- IPv4
-          (addrBytes, d2) <- decodeBytes ipv4AddrLen d1
-          (port, d3) <- decodeU16 d2
-          case ipv4Addr addrBytes of
-            Nothing -> Left DecodeInvalidAddress
-            Just a  -> Right (AddrIPv4 a port, d3)
-        2 -> do  -- IPv6
-          (addrBytes, d2) <- decodeBytes ipv6AddrLen d1
-          (port, d3) <- decodeU16 d2
-          case ipv6Addr addrBytes of
-            Nothing -> Left DecodeInvalidAddress
-            Just a  -> Right (AddrIPv6 a port, d3)
-        4 -> do  -- Tor v3
-          (addrBytes, d2) <- decodeBytes torV3AddrLen d1
-          (port, d3) <- decodeU16 d2
-          case torV3Addr addrBytes of
-            Nothing -> Left DecodeInvalidAddress
-            Just a  -> Right (AddrTorV3 a port, d3)
-        5 -> do  -- DNS hostname
-          (hostLen, d2) <- decodeU8 d1
-          (hostBytes, d3) <-
-            decodeBytes (fromIntegral hostLen) d2
-          (port, d4) <- decodeU16 d3
-          case hostname hostBytes of
-            Nothing -> Left DecodeInvalidAddress
-            Just h  -> Right (AddrDNS h port, d4)
-        _ -> Left DecodeInvalidAddress  -- Unknown address type
+    fixedAddr :: Int -> (ByteString -> Maybe (Word16 -> Address))
+              -> ByteString -> Either DecodeError [Address]
+    fixedAddr len mk d = do
+      (addrBytes, d1) <- decodeBytes len d
+      (port, d2) <- decodeU16 d1
+      keep (mk addrBytes) port d2
+
+    keep :: Maybe (Word16 -> Address) -> Word16 -> ByteString
+         -> Either DecodeError [Address]
+    keep mk port d = case mk of
+      Just f | port /= 0 -> fmap (f port :) (parseAddrs d)
+      _ -> parseAddrs d
 
 -- Channel announcement --------------------------------------------------------
 
 -- | Encode channel_announcement message.
-encodeChannelAnnouncement :: ChannelAnnouncement -> ByteString
-encodeChannelAnnouncement msg = mconcat
-  [ unSignature (channelAnnNodeSig1 msg)
-  , unSignature (channelAnnNodeSig2 msg)
-  , unSignature (channelAnnBitcoinSig1 msg)
-  , unSignature (channelAnnBitcoinSig2 msg)
-  , encodeLenPrefixed (getFeatureBits (channelAnnFeatures msg))
-  , unChainHash (channelAnnChainHash msg)
-  , scidToBytes (channelAnnShortChanId msg)
-  , getNodeId (channelAnnNodeId1 msg)
-  , getNodeId (channelAnnNodeId2 msg)
-  , unPoint (channelAnnBitcoinKey1 msg)
-  , unPoint (channelAnnBitcoinKey2 msg)
-  ]
+--
+-- Fails with 'EncodeLengthOverflow' if the feature bits exceed 65535
+-- bytes.
+encodeChannelAnnouncement :: ChannelAnnouncement
+                          -> Either EncodeError ByteString
+encodeChannelAnnouncement msg = do
+  features <- encodeLenPrefixed (getFeatureBits (channelAnnFeatures msg))
+  Right $ mconcat
+    [ unSignature (channelAnnNodeSig1 msg)
+    , unSignature (channelAnnNodeSig2 msg)
+    , unSignature (channelAnnBitcoinSig1 msg)
+    , unSignature (channelAnnBitcoinSig2 msg)
+    , features
+    , unChainHash (channelAnnChainHash msg)
+    , scidToBytes (channelAnnShortChanId msg)
+    , getNodeId (channelAnnNodeId1 msg)
+    , getNodeId (channelAnnNodeId2 msg)
+    , unPoint (channelAnnBitcoinKey1 msg)
+    , unPoint (channelAnnBitcoinKey2 msg)
+    ]
 
 -- | Decode channel_announcement message.
 decodeChannelAnnouncement :: ByteString
@@ -299,21 +322,22 @@ decodeChannelAnnouncement bs = do
 -- Node announcement -----------------------------------------------------------
 
 -- | Encode node_announcement message.
+--
+-- Fails with 'EncodeLengthOverflow' if the feature bits or the
+-- encoded addresses exceed 65535 bytes.
 encodeNodeAnnouncement :: NodeAnnouncement -> Either EncodeError ByteString
 encodeNodeAnnouncement msg = do
-  addrData <- encodeAddresses (nodeAnnAddresses msg)
-  let features = getFeatureBits (nodeAnnFeatures msg)
-  if BS.length features > 65535
-    then Left EncodeLengthOverflow
-    else Right $ mconcat
-      [ unSignature (nodeAnnSignature msg)
-      , encodeLenPrefixed features
-      , Prim.encodeU32 (nodeAnnTimestamp msg)
-      , getNodeId (nodeAnnNodeId msg)
-      , getRgbColor (nodeAnnRgbColor msg)
-      , getAlias (nodeAnnAlias msg)
-      , encodeLenPrefixed addrData
-      ]
+  features <- encodeLenPrefixed (getFeatureBits (nodeAnnFeatures msg))
+  addrs    <- encodeLenPrefixed =<< encodeAddresses (nodeAnnAddresses msg)
+  Right $ mconcat
+    [ unSignature (nodeAnnSignature msg)
+    , features
+    , Prim.encodeU32 (nodeAnnTimestamp msg)
+    , getNodeId (nodeAnnNodeId msg)
+    , getRgbColor (nodeAnnRgbColor msg)
+    , getAlias (nodeAnnAlias msg)
+    , addrs
+    ]
 
 -- | Encode address list.
 encodeAddresses :: [Address] -> Either EncodeError ByteString
@@ -370,39 +394,34 @@ decodeNodeAnnouncement bs = do
 
 -- | Encode channel_update message.
 --
--- The message_flags byte is derived from the presence of
--- 'chanUpdateHtlcMaxMsat': bit 0 is set when the field is
--- 'Just'.
+-- The message_flags byte is always 0x01: bit 0 (@must_be_one@) is
+-- set, as BOLT #7 requires, and no other bit is.
 encodeChannelUpdate :: ChannelUpdate -> ByteString
-encodeChannelUpdate msg =
-  let !msgFlagsByte = case chanUpdateHtlcMaxMsat msg of
-        Nothing -> 0x00 :: Word8
-        Just _  -> 0x01
-  in  mconcat
-    [ unSignature (chanUpdateSignature msg)
-    , unChainHash (chanUpdateChainHash msg)
-    , scidToBytes (chanUpdateShortChanId msg)
-    , Prim.encodeU32 (chanUpdateTimestamp msg)
-    , BS.singleton msgFlagsByte
-    , BS.singleton (encodeChannelFlags (chanUpdateChanFlags msg))
-    , Prim.encodeU16
-        (getCltvExpiryDelta (chanUpdateCltvExpDelta msg))
-    , Prim.encodeU64
-        (getHtlcMinimumMsat (chanUpdateHtlcMinMsat msg))
-    , Prim.encodeU32
-        (getFeeBaseMsat (chanUpdateFeeBaseMsat msg))
-    , Prim.encodeU32
-        (getFeeProportionalMillionths
-          (chanUpdateFeeProportional msg))
-    , case chanUpdateHtlcMaxMsat msg of
-        Nothing -> BS.empty
-        Just m  -> Prim.encodeU64 (getHtlcMaximumMsat m)
-    ]
+encodeChannelUpdate msg = mconcat
+  [ unSignature (chanUpdateSignature msg)
+  , unChainHash (chanUpdateChainHash msg)
+  , scidToBytes (chanUpdateShortChanId msg)
+  , Prim.encodeU32 (chanUpdateTimestamp msg)
+  , BS.singleton 0x01
+  , BS.singleton (encodeChannelFlags (chanUpdateChanFlags msg))
+  , Prim.encodeU16
+      (getCltvExpiryDelta (chanUpdateCltvExpDelta msg))
+  , Prim.encodeU64
+      (getHtlcMinimumMsat (chanUpdateHtlcMinMsat msg))
+  , Prim.encodeU32
+      (getFeeBaseMsat (chanUpdateFeeBaseMsat msg))
+  , Prim.encodeU32
+      (getFeeProportionalMillionths
+        (chanUpdateFeeProportional msg))
+  , Prim.encodeU64
+      (getHtlcMaximumMsat (chanUpdateHtlcMaxMsat msg))
+  ]
 
 -- | Decode channel_update message.
 --
--- The message_flags byte is read from the wire but not stored;
--- bit 0 determines whether 'htlc_maximum_msat' is present.
+-- The message_flags byte is read from the wire but not stored.
+-- Per BOLT #7, @htlc_maximum_msat@ is always present, and
+-- receivers ignore the @must_be_one@ bit.
 decodeChannelUpdate :: ByteString
                     -> Either DecodeError
                          (ChannelUpdate, ByteString)
@@ -411,31 +430,25 @@ decodeChannelUpdate bs = do
   (chainH, bs2)       <- decodeChainHash bs1
   (scid, bs3)         <- decodeShortChannelId bs2
   (timestamp, bs4)    <- decodeU32 bs3
-  (msgFlagsRaw, bs5)  <- decodeU8 bs4
+  (_msgFlags, bs5)    <- decodeU8 bs4
   (chanFlagsRaw, bs6) <- decodeU8 bs5
   (cltvDelta, bs7)    <- decodeU16 bs6
   (htlcMin, bs8)      <- decodeU64 bs7
   (feeBase, bs9)      <- decodeU32 bs8
   (feeProp, bs10)     <- decodeU32 bs9
-  let !chanFlags' = decodeChannelFlags chanFlagsRaw
-      !htlcMaxPresent = msgFlagsRaw .&. 0x01 /= 0
-  (htlcMax, rest) <- if htlcMaxPresent
-    then do
-      (m, r) <- decodeU64 bs10
-      Right (Just (HtlcMaximumMsat m), r)
-    else Right (Nothing, bs10)
+  (htlcMax, rest)     <- decodeU64 bs10
   let msg = ChannelUpdate
         { chanUpdateSignature       = sig
         , chanUpdateChainHash       = chainH
         , chanUpdateShortChanId     = scid
         , chanUpdateTimestamp       = timestamp
-        , chanUpdateChanFlags       = chanFlags'
+        , chanUpdateChanFlags       = decodeChannelFlags chanFlagsRaw
         , chanUpdateCltvExpDelta    = CltvExpiryDelta cltvDelta
         , chanUpdateHtlcMinMsat     = HtlcMinimumMsat htlcMin
         , chanUpdateFeeBaseMsat     = FeeBaseMsat feeBase
         , chanUpdateFeeProportional =
             FeeProportionalMillionths feeProp
-        , chanUpdateHtlcMaxMsat     = htlcMax
+        , chanUpdateHtlcMaxMsat     = HtlcMaximumMsat htlcMax
         }
   Right (msg, rest)
 
@@ -470,28 +483,30 @@ decodeAnnouncementSignatures bs = do
 -- Query messages --------------------------------------------------------------
 
 -- | Encode query_short_channel_ids message.
+--
+-- Fails with 'EncodeLengthOverflow' if the encoded short_channel_ids
+-- exceed 65535 bytes.
 encodeQueryShortChannelIds :: QueryShortChannelIds
                            -> Either EncodeError ByteString
 encodeQueryShortChannelIds msg = do
-  let scidData = queryScidsData msg
-  if BS.length scidData > 65535
-    then Left EncodeLengthOverflow
-    else Right $ mconcat
-      [ unChainHash (queryScidsChainHash msg)
-      , encodeLenPrefixed scidData
-      , TLV.encodeTlvStream (queryScidsTlvs msg)
-      ]
+  scidData <- encodeLenPrefixed (queryScidsData msg)
+  Right $ mconcat
+    [ unChainHash (queryScidsChainHash msg)
+    , scidData
+    , TLV.encodeTlvStream (queryScidsTlvs msg)
+    ]
 
 -- | Decode query_short_channel_ids message.
+--
+-- The only known TLV type is 1 (query_flags). A malformed TLV
+-- stream or an unknown even type is 'DecodeTlvError'.
 decodeQueryShortChannelIds :: ByteString
                            -> Either DecodeError
                                 (QueryShortChannelIds, ByteString)
 decodeQueryShortChannelIds bs = do
   (chainH, bs1)   <- decodeChainHash bs
   (scidData, bs2) <- decodeLenPrefixed bs1
-  let tlvs = case TLV.decodeTlvStreamRaw bs2 of
-        Left _  -> unsafeTlvStream []
-        Right t -> t
+  tlvs            <- decodeTlvs [1] bs2
   let msg = QueryShortChannelIds
         { queryScidsChainHash = chainH
         , queryScidsData      = scidData
@@ -531,6 +546,9 @@ encodeQueryChannelRange msg = mconcat
   ]
 
 -- | Decode query_channel_range message.
+--
+-- The only known TLV type is 1 (query_option). A malformed TLV
+-- stream or an unknown even type is 'DecodeTlvError'.
 decodeQueryChannelRange :: ByteString
                         -> Either DecodeError
                              (QueryChannelRange, ByteString)
@@ -538,9 +556,7 @@ decodeQueryChannelRange bs = do
   (chainH, bs1)     <- decodeChainHash bs
   (firstBlock, bs2) <- decodeU32 bs1
   (numBlocks, bs3)  <- decodeU32 bs2
-  let tlvs = case TLV.decodeTlvStreamRaw bs3 of
-        Left _  -> unsafeTlvStream []
-        Right t -> t
+  tlvs              <- decodeTlvs [1] bs3
   let msg = QueryChannelRange
         { queryRangeChainHash  = chainH
         , queryRangeFirstBlock = BlockHeight firstBlock
@@ -550,24 +566,29 @@ decodeQueryChannelRange bs = do
   Right (msg, BS.empty)
 
 -- | Encode reply_channel_range message.
+--
+-- Fails with 'EncodeLengthOverflow' if the encoded short_channel_ids
+-- exceed 65535 bytes.
 encodeReplyChannelRange :: ReplyChannelRange
                         -> Either EncodeError ByteString
 encodeReplyChannelRange msg = do
-  let rangeData = replyRangeData msg
-  if BS.length rangeData > 65535
-    then Left EncodeLengthOverflow
-    else Right $ mconcat
-      [ unChainHash (replyRangeChainHash msg)
-      , Prim.encodeU32
-          (getBlockHeight (replyRangeFirstBlock msg))
-      , Prim.encodeU32
-          (getBlockCount (replyRangeNumBlocks msg))
-      , BS.singleton (replyRangeSyncComplete msg)
-      , encodeLenPrefixed rangeData
-      , TLV.encodeTlvStream (replyRangeTlvs msg)
-      ]
+  rangeData <- encodeLenPrefixed (replyRangeData msg)
+  Right $ mconcat
+    [ unChainHash (replyRangeChainHash msg)
+    , Prim.encodeU32
+        (getBlockHeight (replyRangeFirstBlock msg))
+    , Prim.encodeU32
+        (getBlockCount (replyRangeNumBlocks msg))
+    , BS.singleton (replyRangeSyncComplete msg)
+    , rangeData
+    , TLV.encodeTlvStream (replyRangeTlvs msg)
+    ]
 
 -- | Decode reply_channel_range message.
+--
+-- The known TLV types are 1 (timestamps_tlv) and 3
+-- (checksums_tlv). A malformed TLV stream or an unknown even type
+-- is 'DecodeTlvError'.
 decodeReplyChannelRange :: ByteString
                         -> Either DecodeError
                              (ReplyChannelRange, ByteString)
@@ -577,9 +598,7 @@ decodeReplyChannelRange bs = do
   (numBlocks, bs3)    <- decodeU32 bs2
   (syncComplete, bs4) <- decodeU8 bs3
   (rangeData, bs5)    <- decodeLenPrefixed bs4
-  let tlvs = case TLV.decodeTlvStreamRaw bs5 of
-        Left _  -> unsafeTlvStream []
-        Right t -> t
+  tlvs                <- decodeTlvs [1, 3] bs5
   let msg = ReplyChannelRange
         { replyRangeChainHash    = chainH
         , replyRangeFirstBlock   = BlockHeight firstBlock
