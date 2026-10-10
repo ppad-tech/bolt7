@@ -95,6 +95,22 @@ testChannelUpdate = ChannelUpdate
   , chanUpdateHtlcMaxMsat     = HtlcMaximumMsat 1000000000
   }
 
+-- | Unwrap a Maybe, failing the test on Nothing.
+expectJust :: String -> Maybe a -> IO a
+expectJust what = maybe (assertFailure ("unexpected Nothing: " ++ what)) pure
+
+-- | A node_announcement fixture with the given addresses.
+testNodeAnn :: [Address] -> NodeAnnouncement
+testNodeAnn addrs = NodeAnnouncement
+  { nodeAnnSignature = testSignature
+  , nodeAnnFeatures  = emptyFeatures
+  , nodeAnnTimestamp = 1234567890
+  , nodeAnnNodeId    = testNodeId
+  , nodeAnnRgbColor  = testRgbColor
+  , nodeAnnAlias     = testAlias
+  , nodeAnnAddresses = addrs
+  }
+
 -- | Replace the byte at an offset (no-op past the end).
 setByte :: Int -> Word8 -> BS.ByteString -> BS.ByteString
 setByte i w bs
@@ -217,7 +233,79 @@ node_announcement_tests = testGroup "NodeAnnouncement" [
         Right encoded -> case decodeNodeAnnouncement encoded of
           Right (decoded, _) -> decoded @?= msg
           Left e -> assertFailure $ "decode failed: " ++ show e
+  , testGroup "address descriptors" [
+      testCase "skips deprecated Tor v2 descriptors" $ do
+        v4 <- addrV4
+        v6 <- addrV6
+        decodeAddrs (descV4 <> descTorV2 <> descV6) @?= Right [v4, v6]
+    , testCase "stops at the first unknown type" $ do
+        v4 <- addrV4
+        let wire = descV4 <> BS.pack [6, 1, 2, 3] <> descV6
+        decodeAddrs wire @?= Right [v4]
+        -- the ignored bytes are still consumed as part of addrlen
+        fmap snd (decodeNodeAnnouncement (nodeAnnWire wire))
+          @?= Right BS.empty
+    , testCase "stops at a type-0 descriptor" $
+        decodeAddrs (BS.singleton 0 <> descV4) @?= Right []
+    , testCase "skips descriptors with port 0" $ do
+        v6 <- addrV6
+        let v4port0 = BS.pack [1, 127, 0, 0, 1, 0, 0]
+        decodeAddrs (v4port0 <> descV6) @?= Right [v6]
+    , testCase "skips empty and non-ASCII hostnames" $ do
+        h <- expectJust "hostname" (hostname "ln.example.com")
+        let wire = descDns "" <> descDns "\xff\&ab"
+              <> descDns "ln.example.com"
+        decodeAddrs wire @?= Right [AddrDNS h 9735]
+    , testCase "rejects a truncated descriptor of a known type" $ do
+        decodeAddrs (BS.pack [1, 127, 0, 0])
+          @?= Left DecodeInsufficientBytes
+        decodeAddrs (BS.pack [3, 1, 2, 3])
+          @?= Left DecodeInsufficientBytes
+        decodeAddrs (BS.pack [5, 4, 0x61])
+          @?= Left DecodeInsufficientBytes
+    , testCase "hostname rejects non-ASCII bytes" $ do
+        hostname "\0\255" @?= Nothing
+        hostname "caf\233" @?= Nothing
+        fmap getHostname (hostname "xn--caf-dma") @?= Just "xn--caf-dma"
+    ]
   ]
+
+-- | node_announcement payload carrying the given address bytes.
+nodeAnnWire :: BS.ByteString -> BS.ByteString
+nodeAnnWire addrs = mconcat
+  [ BS.replicate 64 0xee              -- signature
+  , BS.pack [0, 0]                    -- flen
+  , BS.pack [0x49, 0x96, 0x02, 0xd2]  -- timestamp
+  , getNodeId testNodeId
+  , getRgbColor testRgbColor
+  , getAlias testAlias
+  , u16be (BS.length addrs)
+  , addrs
+  ]
+
+-- | Decode the addresses of a node_announcement built by 'nodeAnnWire'.
+decodeAddrs :: BS.ByteString -> Either DecodeError [Address]
+decodeAddrs = fmap (nodeAnnAddresses . fst) . decodeNodeAnnouncement
+  . nodeAnnWire
+
+-- | Big-endian u16 (low 16 bits).
+u16be :: Int -> BS.ByteString
+u16be n = BS.pack [fromIntegral (n `div` 256), fromIntegral n]
+
+-- | Address descriptors (port 9735) and the values they decode to.
+descV4, descV6, descTorV2 :: BS.ByteString
+descV4 = BS.pack [1, 127, 0, 0, 1, 0x26, 0x07]
+descV6 = BS.pack (2 : replicate 15 0 ++ [1, 0x26, 0x07])
+descTorV2 = BS.cons 3 (BS.replicate 12 0xaa)
+
+descDns :: BS.ByteString -> BS.ByteString
+descDns h = BS.pack [5, fromIntegral (BS.length h)] <> h <> u16be 9735
+
+addrV4, addrV6 :: IO Address
+addrV4 = fmap (`AddrIPv4` 9735)
+  (expectJust "ipv4" (ipv4Addr (BS.pack [127, 0, 0, 1])))
+addrV6 = fmap (`AddrIPv6` 9735)
+  (expectJust "ipv6" (ipv6Addr (BS.pack (replicate 15 0 ++ [1]))))
 
 -- Channel Update Tests --------------------------------------------------------
 
@@ -564,6 +652,19 @@ validation_tests = testGroup "Validation" [
               , channelAnnBitcoinKey2 = testPoint
               }
         validateChannelAnnouncement msg @?= Left ValidateNodeIdOrdering
+    ]
+  , testGroup "NodeAnnouncement" [
+      testCase "one DNS hostname passes" $ do
+        h <- expectJust "hostname" (hostname "ln.example.com")
+        v4 <- addrV4
+        validateNodeAnnouncement (testNodeAnn [v4, AddrDNS h 9735])
+          @?= Right ()
+    , testCase "rejects more than one DNS hostname" $ do
+        h1 <- expectJust "hostname" (hostname "a.example.com")
+        h2 <- expectJust "hostname" (hostname "b.example.com")
+        validateNodeAnnouncement
+          (testNodeAnn [AddrDNS h1 9735, AddrDNS h2 9735])
+          @?= Left ValidateMultipleDns
     ]
   , testGroup "ChannelUpdate" [
       testCase "valid update passes" $ do
