@@ -303,18 +303,18 @@ encode_channel_update m =
 --   @message_flags@ is kept but not interpreted.
 decode_channel_update :: BS.ByteString -> Either DecodeError ChannelUpdate
 decode_channel_update b0 = do
-  (sig, b1)  <- signature b0
-  (ch, b2)   <- chain_hash b1
-  (s, b3)    <- short_channel_id b2
-  (ts, b4)   <- u32 b3
-  (mf, b5)   <- u8 b4
-  (cf, b6)   <- u8 b5
-  (cltv, b7) <- u16 b6
-  (hmin, b8) <- milli_satoshi b7
-  (fb, b9)   <- u32 b8
-  (fp, b10)  <- u32 b9
+  (sig, b1)   <- signature b0
+  (ch, b2)    <- chain_hash b1
+  (s, b3)     <- short_channel_id b2
+  (ts, b4)    <- u32 b3
+  (mf, b5)    <- u8 b4
+  (cf, b6)    <- u8 b5
+  (cltv, b7)  <- u16 b6
+  (hmin, b8)  <- milli_satoshi b7
+  (fb, b9)    <- u32 b8
+  (fp, b10)   <- u32 b9
   (hmax, b11) <- milli_satoshi b10
-  ext        <- extension b11
+  ext         <- extension b11
   pure ChannelUpdate
     { cu_signature                   = sig
     , cu_chain_hash                  = ch
