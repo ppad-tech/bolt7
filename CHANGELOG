@@ -1,0 +1,38 @@
+# Changelog
+
+- 0.1.0 (UNRELEASED)
+  * A substantial rewrite, with breaking changes throughout:
+
+    * The API is exported from Lightning.Protocol.BOLT7 alone, and uses
+      snake_case names (e.g. decode_channel_update, cu_timestamp).
+
+    * Fundamental types come from ppad-bolt1 0.1 (Point, ShortChannelId,
+      MilliSatoshi, TLV streams) and feature vectors from ppad-bolt9.
+      The local NodeId, FeatureBits, routing-parameter newtypes,
+      mainnetChainHash and length constants are gone.
+
+    * Decoders take a whole payload and keep every byte: unassigned
+      flag bits, unknown address descriptors and extension TLV records.
+      Encoding a decoded message reproduces it, so its signatures still
+      verify. channel_update models message_flags (must_be_one,
+      dont_forward) and channel_flags (direction, disable).
+
+    * Query messages have typed short channel id lists, query_flags,
+      query_option, timestamps and checksums.
+
+    * Signature digests and checksums take typed messages. Adds
+      signature verification (via ppad-secp256k1), a message
+      dispatcher, and usable_addresses for the receiver's address
+      rules.
+
+  * Fixes: htlc_maximum_msat is mandatory; node_announcement accepts
+    unknown and deprecated address descriptors; malformed query TLV
+    streams, unknown even TLV types and the deprecated zlib encoding are
+    rejected; u16 length prefixes no longer wrap; validation no longer
+    accepts undecodable data or claims to check feature bits.
+
+  * Tests cover the BOLT #7 extended-queries vectors and real mainnet
+    gossip, with signature checks.
+
+- 0.0.1 (2026-04-18)
+  * Initial release.
