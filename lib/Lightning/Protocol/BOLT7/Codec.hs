@@ -544,7 +544,8 @@ decode_reply_channel_range b0 = do
     , rcr_short_channel_ids = scids
     , rcr_timestamps        = ts
     , rcr_checksums         = cs
-    , rcr_tlvs              = BOLT1.filter_tlv_stream (\t -> t /= 1 && t /= 3) s
+    , rcr_tlvs              =
+        BOLT1.filter_tlv_stream (\t -> t /= 1 && t /= 3) s
     }
   where
     timestamps n v = case BS.uncons v of
@@ -698,7 +699,8 @@ merge
   :: [Word64] -> [TlvRecord] -> TlvStream -> Either EncodeError BS.ByteString
 merge known typed extra
   | any ((`elem` known) . tlv_type) rs = Left EncodeInvalidTlvs
-  | otherwise = maybe (Left EncodeInvalidTlvs) (Right . BOLT1.encode_tlv_stream)
+  | otherwise =
+      maybe (Left EncodeInvalidTlvs) (Right . BOLT1.encode_tlv_stream)
       (BOLT1.tlv_stream (typed <> rs))
   where
     rs = BOLT1.un_tlv_stream extra

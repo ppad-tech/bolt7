@@ -226,7 +226,8 @@ field_tests = testGroup "field types" [
 
 -- the vectors' chain hash (regtest)
 regtest :: IO ChainHash
-regtest = hex "0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206"
+regtest = hex
+  "0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206"
   >>= must "chain_hash" . BOLT1.chain_hash
 
 scids :: [(Word32, Word32, Word16)] -> IO [ShortChannelId]
@@ -583,7 +584,8 @@ channel_update_tests = testGroup "channel_update" [
       encode_channel_update d @?= wire
   , testCase "keeps unassigned flag bits" $ do
       u <- fixtures >>= update_fixture
-      let wire = set_byte 109 0xfd (set_byte 108 0xfc (encode_channel_update u))
+      let wire = set_byte 109 0xfd
+                   (set_byte 108 0xfc (encode_channel_update u))
       d <- expectRight "decode" (decode_channel_update wire)
       cu_message_flags d @?= MessageFlags 0xfc
       cu_channel_flags d @?= ChannelFlags 0xfd
