@@ -70,7 +70,6 @@
           ppad-sha256 = sha256-llvm;
           ${lib} = new.callCabal2nix lib ./. {
             ppad-bolt1 = new.ppad-bolt1;
-            ppad-bolt9 = new.ppad-bolt9;
             ppad-secp256k1 = new.ppad-secp256k1;
             ppad-sha256 = new.ppad-sha256;
           };
