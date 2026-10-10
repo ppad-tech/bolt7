@@ -687,6 +687,37 @@ hash_tests = testGroup "Hash Functions" [
               }
         channelUpdateChecksum msg1 @?= channelUpdateChecksum msg2
     ]
+  , testGroup "Input length" [
+      testCase "channel_update needs 136 bytes" $ do
+        let wire = encodeChannelUpdate testChannelUpdate
+        channelUpdateHash (BS.take 135 wire) @?= Nothing
+        channelUpdateChecksum (BS.take 135 wire) @?= Nothing
+        channelUpdateChecksum "short" @?= Nothing
+        fmap BS.length (channelUpdateHash wire) @?= Just 32
+        assertBool "checksum" (channelUpdateChecksum wire /= Nothing)
+    , testCase "channel_announcement needs its declared features" $
+        case encodeChannelAnnouncement
+               (testChannelAnn (featureBits (BS.pack [1, 2]))) of
+          Left e -> assertFailure $ "encode failed: " ++ show e
+          Right wire -> do
+            fmap BS.length (channelAnnouncementHash wire) @?= Just 32
+            channelAnnouncementHash (BS.take (BS.length wire - 1) wire)
+              @?= Nothing
+            -- claim one more feature byte than present
+            channelAnnouncementHash (setByte 257 3 wire) @?= Nothing
+            channelAnnouncementHash (BS.take 257 wire) @?= Nothing
+    , testCase "node_announcement needs its declared addresses" $ do
+        v4 <- addrV4
+        case encodeNodeAnnouncement (testNodeAnn [v4]) of
+          Left e -> assertFailure $ "encode failed: " ++ show e
+          Right wire -> do
+            fmap BS.length (nodeAnnouncementHash wire) @?= Just 32
+            nodeAnnouncementHash (BS.take (BS.length wire - 1) wire)
+              @?= Nothing
+            -- claim one more address byte than present (addrlen 8)
+            nodeAnnouncementHash (setByte 139 8 wire) @?= Nothing
+            nodeAnnouncementHash (BS.take 139 wire) @?= Nothing
+    ]
   ]
 
 -- Validation Tests -----------------------------------------------------------
