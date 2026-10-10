@@ -54,7 +54,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Word (Word8, Word16, Word32, Word64)
 import GHC.Generics (Generic)
-import Lightning.Protocol.BOLT1 (unsafeTlvStream)
+import Lightning.Protocol.BOLT1 (TlvStream)
 import qualified Lightning.Protocol.BOLT1.Prim as Prim
 import qualified Lightning.Protocol.BOLT1.TLV as TLV
 import Lightning.Protocol.BOLT7.Messages
@@ -148,6 +148,15 @@ decodeFixed len err mkVal bs = do
     Nothing -> Left err
     Just v  -> Right (v, rest)
 {-# INLINE decodeFixed #-}
+
+-- | Decode a TLV stream per BOLT #1, given the known types: a
+-- malformed stream or an unknown even type is an error, and unknown
+-- odd types are skipped.
+decodeTlvs :: [Word64] -> ByteString -> Either DecodeError TlvStream
+decodeTlvs known bs = case TLV.decodeTlvStreamWith (`elem` known) bs of
+  Left _  -> Left DecodeTlvError
+  Right t -> Right t
+{-# INLINE decodeTlvs #-}
 
 -- Type-specific decoders ------------------------------------------------------
 
@@ -475,15 +484,16 @@ encodeQueryShortChannelIds msg = do
       ]
 
 -- | Decode query_short_channel_ids message.
+--
+-- The only known TLV type is 1 (query_flags). A malformed TLV
+-- stream or an unknown even type is 'DecodeTlvError'.
 decodeQueryShortChannelIds :: ByteString
                            -> Either DecodeError
                                 (QueryShortChannelIds, ByteString)
 decodeQueryShortChannelIds bs = do
   (chainH, bs1)   <- decodeChainHash bs
   (scidData, bs2) <- decodeLenPrefixed bs1
-  let tlvs = case TLV.decodeTlvStreamRaw bs2 of
-        Left _  -> unsafeTlvStream []
-        Right t -> t
+  tlvs            <- decodeTlvs [1] bs2
   let msg = QueryShortChannelIds
         { queryScidsChainHash = chainH
         , queryScidsData      = scidData
@@ -523,6 +533,9 @@ encodeQueryChannelRange msg = mconcat
   ]
 
 -- | Decode query_channel_range message.
+--
+-- The only known TLV type is 1 (query_option). A malformed TLV
+-- stream or an unknown even type is 'DecodeTlvError'.
 decodeQueryChannelRange :: ByteString
                         -> Either DecodeError
                              (QueryChannelRange, ByteString)
@@ -530,9 +543,7 @@ decodeQueryChannelRange bs = do
   (chainH, bs1)     <- decodeChainHash bs
   (firstBlock, bs2) <- decodeU32 bs1
   (numBlocks, bs3)  <- decodeU32 bs2
-  let tlvs = case TLV.decodeTlvStreamRaw bs3 of
-        Left _  -> unsafeTlvStream []
-        Right t -> t
+  tlvs              <- decodeTlvs [1] bs3
   let msg = QueryChannelRange
         { queryRangeChainHash  = chainH
         , queryRangeFirstBlock = BlockHeight firstBlock
@@ -560,6 +571,10 @@ encodeReplyChannelRange msg = do
       ]
 
 -- | Decode reply_channel_range message.
+--
+-- The known TLV types are 1 (timestamps_tlv) and 3
+-- (checksums_tlv). A malformed TLV stream or an unknown even type
+-- is 'DecodeTlvError'.
 decodeReplyChannelRange :: ByteString
                         -> Either DecodeError
                              (ReplyChannelRange, ByteString)
@@ -569,9 +584,7 @@ decodeReplyChannelRange bs = do
   (numBlocks, bs3)    <- decodeU32 bs2
   (syncComplete, bs4) <- decodeU8 bs3
   (rangeData, bs5)    <- decodeLenPrefixed bs4
-  let tlvs = case TLV.decodeTlvStreamRaw bs5 of
-        Left _  -> unsafeTlvStream []
-        Right t -> t
+  tlvs                <- decodeTlvs [1, 3] bs5
   let msg = ReplyChannelRange
         { replyRangeChainHash    = chainH
         , replyRangeFirstBlock   = BlockHeight firstBlock
