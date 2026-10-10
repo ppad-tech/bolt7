@@ -21,7 +21,7 @@ module Vectors (
 import qualified Data.ByteString as BS
 import Data.Word (Word32)
 
--- mainnet gossip --------------------------------------------------------------
+-- mainnet gossip -------------------------------------------------------------
 
 -- Real mainnet channel_announcements and channel_updates, as captured
 -- from a peer. Payloads exclude the 2-byte message type. The digests

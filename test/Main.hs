@@ -623,7 +623,8 @@ channel_update_tests = testGroup "channel_update" [
       decode_channel_update (wire <> "\xfd\x00\x01\x00")
         @?= Left (DecodeTlvError TlvNonMinimalBigSize)
   , testCase "rejects truncated input" $
-      decode_channel_update (BS.replicate 50 0) @?= Left DecodeInsufficientBytes
+      decode_channel_update (BS.replicate 50 0)
+        @?= Left DecodeInsufficientBytes
   ]
 
 -- queries --------------------------------------------------------------------
@@ -712,7 +713,8 @@ query_tests = testGroup "queries" [
       testCase "query_flags" $ do
         fx <- fixtures
         let ss = take 2 (fx_scids fx)
-            wire = qsci_wire fx (encoded_ids ss) (BS.pack [1, 3, 0, 0x01, 0x1f])
+            wire = qsci_wire fx (encoded_ids ss)
+              (BS.pack [1, 3, 0, 0x01, 0x1f])
             m = QueryShortChannelIds (fx_chain fx) ss
                   (Just [QueryFlags 1, QueryFlags 31]) BOLT1.empty_tlv_stream
         decode_query_short_channel_ids wire @?= Right m
@@ -981,7 +983,8 @@ validation_tests = testGroup "validation" [
       v4 <- must "ipv4" (ipv4_addr "\127\0\0\1")
       h1 <- must "hostname" (hostname "a.example.com")
       h2 <- must "hostname" (hostname "b.example.com")
-      validate_node_announcement (node_fixture fx [AddrIPv4 v4 1, AddrDNS h1 1])
+      validate_node_announcement
+        (node_fixture fx [AddrIPv4 v4 1, AddrDNS h1 1])
         @?= Right ()
       validate_node_announcement (node_fixture fx [AddrDNS h1 1, AddrDNS h2 1])
         @?= Left ValidateMultipleDns
@@ -997,7 +1000,8 @@ validation_tests = testGroup "validation" [
   , testCase "query_channel_range block range" $ do
       fx <- fixtures
       let q f n = validate_query_channel_range
-            (QueryChannelRange (fx_chain fx) f n Nothing BOLT1.empty_tlv_stream)
+            (QueryChannelRange (fx_chain fx) f n Nothing
+              BOLT1.empty_tlv_stream)
       q 600000 10000 @?= Right ()
       q 600000 0 @?= Left ValidateZeroBlocks
       q maxBound 1 @?= Right ()
